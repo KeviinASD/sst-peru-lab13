@@ -158,7 +158,11 @@ def mostrar_kpi_cards(data):
     
     # KPI 1: Riesgos Pendientes
     with col1:
-        riesgos_pendientes = len(data['riesgos'][data['riesgos']['estado'] == 'pendiente'])
+        if not data['riesgos'].empty and 'estado' in data['riesgos'].columns:
+            riesgos_pendientes = len(data['riesgos'][data['riesgos']['estado'] == 'pendiente'])
+        else:
+            riesgos_pendientes = len(data['riesgos']) if not data['riesgos'].empty else 0
+        
         st.metric(
             label="⚠️ Riesgos Pendientes",
             value=riesgos_pendientes,
@@ -179,7 +183,14 @@ def mostrar_kpi_cards(data):
     
     # KPI 3: EPP por Vencer
     with col3:
-        epp_vencer = len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']).dt.date <= (datetime.now().date() + timedelta(days=30))])
+        if not data['epp'].empty and 'fecha_vencimiento' in data['epp'].columns:
+            try:
+                epp_vencer = len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']).dt.date <= (datetime.now().date() + timedelta(days=30))])
+            except:
+                epp_vencer = 0
+        else:
+            epp_vencer = 0
+        
         st.metric(
             label="🛡️ EPP por Vencer",
             value=epp_vencer,
@@ -189,7 +200,11 @@ def mostrar_kpi_cards(data):
     
     # KPI 4: Hallazgos Abiertos
     with col4:
-        hallazgos_abiertos = len(data['hallazgos'][data['hallazgos']['estado'] == 'abierto'])
+        if not data['hallazgos'].empty and 'estado' in data['hallazgos'].columns:
+            hallazgos_abiertos = len(data['hallazgos'][data['hallazgos']['estado'] == 'abierto'])
+        else:
+            hallazgos_abiertos = len(data['hallazgos']) if not data['hallazgos'].empty else 0
+        
         st.metric(
             label="📋 Hallazgos Abiertos",
             value=hallazgos_abiertos,

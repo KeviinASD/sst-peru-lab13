@@ -6,6 +6,8 @@ from app.utils.storage_helper import subir_archivo_storage
 from app.auth import requerir_rol
 import json
 import requests
+from app.modules.dashboard import calcular_tasa_frecuencia
+import plotly.express as px
 
 def mostrar(usuario):
     """Módulo de Análisis de Incidentes y Accidentes (Ley 29783 Art. 33-34)"""
@@ -69,7 +71,7 @@ def reportar_incidente(usuario):
             )[1]
         
         with col2:
-            fecha_hora = st.datetime_input(
+            fecha_hora = st.date_input(
                 "Fecha y Hora del Evento",
                 value=fecha_actual,
                 help="Fecha exacta cuando ocurrió"
@@ -198,6 +200,21 @@ def reportar_incidente(usuario):
                 st.error("❌ Descripción y nombre del trabajador son obligatorios")
                 return
             
+            # Buscar ID del trabajador
+            trabajador_id = None
+            if trabajador_nombre == usuario['nombre_completo']:
+                # Es el mismo usuario que reporta
+                trabajador_id = usuario['id']
+            else:
+                # Buscar por nombre en la base de datos
+                try:
+                    supabase = get_supabase_client()
+                    trabajador_result = supabase.table('usuarios').select('id').eq('nombre_completo', trabajador_nombre).execute()
+                    if trabajador_result.data:
+                        trabajador_id = trabajador_result.data[0]['id']
+                except Exception as e:
+                    st.warning(f"No se pudo encontrar el trabajador: {trabajador_nombre}")
+            
             # Preparar datos
             incidente_data = {
                 'codigo': codigo,
@@ -205,22 +222,15 @@ def reportar_incidente(usuario):
                 'fecha_hora': fecha_hora.isoformat(),
                 'area': area,
                 'puesto_trabajo': puesto_trabajo,
-                'trabajador_nombre': trabajador_nombre,
+                'trabajador_id': trabajador_id,
                 'descripcion': descripcion,
-                'consecuencias': {
+                'consecuencias': json.dumps({
                     'lesiones': lesiones,
                     'danos': danos,
                     'gravedad': prioridad['gravedad']
-                },
+                }),
                 'testigos': [t.strip() for t in testigos.split(',') if t.strip()],
-                'estado': 'reportado',
-                'nivel_riesgo': prioridad['gravedad'],
-                'reportado_por': usuario['id'],
-                'informe_inicial': json.dumps({
-                    'fecha_reporte': datetime.now().isoformat(),
-                    'reportado_por_nombre': usuario['nombre_completo'],
-                    'rol_reporta': usuario['rol']
-                })
+                'estado': 'reportado'
             }
             
             # Guardar incidente
@@ -250,18 +260,18 @@ def calcular_prioridad(lesiones, danos):
     gravedad = puntos_lesiones[lesiones] + puntos_danos[danos]
     
     if gravedad >= 8:
-        return {'nivel': 'crítico', 'label': 'CRÍTICO', 'descripcion': 'Requiere respuesta inmediata (< 15 min)'}
+        return {'nivel': 'crítico', 'label': 'CRÍTICO', 'descripcion': 'Requiere respuesta inmediata (< 15 min)', 'gravedad': gravedad}
     elif gravedad >= 5:
-        return {'nivel': 'alto', 'label': 'ALTO', 'descripcion': 'Respuesta rápida (< 1 hora)'}
+        return {'nivel': 'alto', 'label': 'ALTO', 'descripcion': 'Respuesta rápida (< 1 hora)', 'gravedad': gravedad}
     elif gravedad >= 2:
-        return {'nivel': 'medio', 'label': 'MEDIO', 'descripcion': 'Respuesta en 24 horas'}
+        return {'nivel': 'medio', 'label': 'MEDIO', 'descripcion': 'Respuesta en 24 horas', 'gravedad': gravedad}
     else:
-        return {'nivel': 'bajo', 'label': 'BAJO', 'descripcion': 'Respuesta estándar (72 horas)'}
+        return {'nivel': 'bajo', 'label': 'BAJO', 'descripcion': 'Respuesta estándar (72 horas)', 'gravedad': gravedad}
 
 def guardar_incidente(data):
     """Guardar incidente en Supabase"""
     supabase = get_supabase_client()
-    
+    print("esto se va a guardar: ")
     try:
         response = supabase.table('incidentes').insert(data).execute()
         return response.data[0]['id'] if response.data else None
@@ -332,17 +342,15 @@ def notificar_incidente(data):
         
         # Enviar a n8n
         requests.post(
-            st.secrets["N8N_WEBHOOK_URL"] + "/incidente-reportado",
+            st.secrets.get("N8N_WEBHOOK_URL", "http://localhost:5678") + "/incidente-reportado",
             json={
                 'codigo': data['codigo'],
                 'tipo': data['tipo'],
                 'area': data['area'],
-                'nivel_riesgo': data['nivel_riesgo'],
                 'descripcion': data['descripcion'],
-                'trabajador_nombre': data['trabajador_nombre'],
+                'puesto_trabajo': data.get('puesto_trabajo', ''),
                 'supervisor_email': supervisor_email,
-                'supervisor_id': supervisor_id,
-                'prioridad': data['nivel_riesgo']
+                'supervisor_id': supervisor_id
             },
             timeout=5
         )
@@ -357,9 +365,11 @@ def investigar_incidente(usuario):
     supabase = get_supabase_client()
     
     # Cargar incidentes pendientes de investigación
-    incidentes = supabase.table('incidentes').select(
-        '*, acciones_correctivas(*), usuarios!incidentes_reportado_por_fkey(nombre_completo)'
-    ).in_('estado', ['reportado', 'en_investigacion']).execute().data
+    try:
+        incidentes = supabase.table('incidentes').select('*').in_('estado', ['reportado', 'en_investigacion']).execute().data
+    except Exception as e:
+        st.error(f"Error cargando incidentes: {e}")
+        incidentes = []
     
     if not incidentes:
         st.success("✅ No hay incidentes pendientes de investigación")
@@ -379,16 +389,26 @@ def investigar_incidente(usuario):
     with st.expander("📋 Detalles del Incidente", expanded=True):
         col1, col2 = st.columns(2)
         
+        # Obtener información del trabajador si existe el ID
+        trabajador_info = "N/A"
+        if incidente_seleccionado.get('trabajador_id'):
+            try:
+                trabajador = supabase.table('usuarios').select('nombre_completo').eq('id', incidente_seleccionado['trabajador_id']).execute()
+                if trabajador.data:
+                    trabajador_info = trabajador.data[0]['nombre_completo']
+            except:
+                trabajador_info = "N/A"
+        
         with col1:
             st.write(f"**Código:** {incidente_seleccionado['codigo']}")
             st.write(f"**Fecha:** {incidente_seleccionado['fecha_hora']}")
             st.write(f"**Área:** {incidente_seleccionado['area']}")
-            st.write(f"**Trabajador:** {incidente_seleccionado['trabajador_nombre']}")
+            st.write(f"**Trabajador:** {trabajador_info}")
         
         with col2:
-            st.write(f"**Reportado por:** {incidente_seleccionado['usuarios']['nombre_completo']}")
+            st.write(f"**Puesto de Trabajo:** {incidente_seleccionado.get('puesto_trabajo', 'N/A')}")
             st.write(f"**Estado:** {incidente_seleccionado['estado'].upper()}")
-            st.write(f"**Prioridad:** {incidente_seleccionado['nivel_riesgo']}/25")
+            st.write(f"**Tipo:** {incidente_seleccionado['tipo'].upper()}")
         
         st.write(f"**Descripción:** {incidente_seleccionado['descripcion']}")
         
@@ -547,21 +567,17 @@ def investigar_incidente(usuario):
                     documentos_investigacion
                 )
                 
-                def actualizar_estado_incidente(incidente_id, estado):
-                    """Actualizar estado de incidente"""
-                    supabase = get_supabase_client()
-                    
+                # Actualizar estado - determinar si cerrar basado en la gravedad de las consecuencias
+                cerrar_incidente = False
+                if incidente_seleccionado.get('consecuencias'):
                     try:
-                        supabase.table('incidentes').update({
-                            'estado': estado,
-                            'fecha_cierre': datetime.now().date() if estado == 'cerrado' else None
-                        }).eq('id', incidente_id).execute()
-                    except Exception as e:
-                        st.error(f"Error actualizando estado: {e}")
-
-
-                # Actualizar estado
-                nuevo_estado = 'cerrado' if incidente_seleccionado['nivel_riesgo'] < 5 else 'analizado'
+                        consecuencias = json.loads(incidente_seleccionado['consecuencias']) if isinstance(incidente_seleccionado['consecuencias'], str) else incidente_seleccionado['consecuencias']
+                        gravedad = consecuencias.get('gravedad', 0)
+                        cerrar_incidente = gravedad < 5
+                    except:
+                        pass
+                
+                nuevo_estado = 'cerrado' if cerrar_incidente else 'analizado'
                 actualizar_estado_incidente(incidente_seleccionado['id'], nuevo_estado)
                 
                 st.success(f"✅ Investigación guardada. Estado: {nuevo_estado.upper()}")
@@ -667,9 +683,11 @@ def gestionar_acciones(usuario):
         )
     
     # Consultar acciones
-    query = supabase.from_('acciones_correctivas').select(
-        '*, incidentes(codigo, area), usuarios(nombre_completo)'
-    )
+    try:
+        query = supabase.from_('acciones_correctivas').select('*')
+    except Exception as e:
+        st.error(f"Error consultando acciones: {e}")
+        return
     
     if estado_filtro != "todos":
         query = query.eq('estado', estado_filtro)
@@ -724,7 +742,7 @@ def gestionar_acciones(usuario):
         accion_actual = df_acciones[df_acciones['id'] == accion_editar].iloc[0]
         
         with st.form(f"form_accion_{accion_editar}"):
-            st.write(f"**Incid.:** {accion_actual['incidentes']['codigo']} | **Área:** {accion_actual['incidentes']['area']}")
+            st.write(f"**ID Acción:** {accion_actual['id']} | **Incidente ID:** {accion_actual.get('incidente_id', 'N/A')}")
             st.write(f"**Descripción:** {accion_actual['descripcion']}")
             
             col1, col2 = st.columns(2)
@@ -776,6 +794,18 @@ def gestionar_acciones(usuario):
                 st.success("✅ Acción actualizada exitosamente")
                 st.rerun()
 
+def actualizar_estado_incidente(incidente_id, estado):
+    """Actualizar estado de incidente"""
+    supabase = get_supabase_client()
+    
+    try:
+        supabase.table('incidentes').update({
+            'estado': estado,
+            'fecha_cierre': datetime.now().isoformat() if estado == 'cerrado' else None
+        }).eq('id', incidente_id).execute()
+    except Exception as e:
+        st.error(f"Error actualizando estado: {e}")
+
 def actualizar_accion(accion_id, data, evidencia_archivo):
     """Actualizar acción correctiva"""
     supabase = get_supabase_client()
@@ -802,6 +832,20 @@ def actualizar_accion(accion_id, data, evidencia_archivo):
             
     except Exception as e:
         st.error(f"Error actualizando acción: {e}")
+
+def actualizar_estado_incidente(incidente_id, nuevo_estado):
+    """Actualizar el estado de un incidente"""
+    supabase = get_supabase_client()
+    
+    try:
+        response = supabase.table('incidentes').update({
+            'estado': nuevo_estado
+        }).eq('id', incidente_id).execute()
+        
+        return response.data[0] if response.data else None
+    except Exception as e:
+        st.error(f"Error actualizando estado del incidente: {e}")
+        return None
 
 def dashboard_incidentes(usuario):
     """Dashboard de seguimiento de incidentes"""
@@ -833,9 +877,11 @@ def dashboard_incidentes(usuario):
             )
     
     # Cargar datos
-    query = supabase.table('incidentes').select(
-        '*, acciones_correctivas(*), usuarios!incidentes_reportado_por_fkey(nombre_completo)'
-    ).gte('fecha_hora', fecha_inicio).lte('fecha_hora', fecha_fin)
+    try:
+        query = supabase.table('incidentes').select('*').gte('fecha_hora', fecha_inicio).lte('fecha_hora', fecha_fin)
+    except Exception as e:
+        st.error(f"Error cargando datos del dashboard: {e}")
+        return
     
     if area_filtro:
         query = query.in_('area', area_filtro)
@@ -863,13 +909,39 @@ def dashboard_incidentes(usuario):
         st.metric("✅ % Cierre", f"{tasa_cierre:.1f}%")
     
     with col_kpi3:
-        avg_riesgo = df_incidentes['nivel_riesgo'].mean()
-        st.metric("⚠️ Riesgo Promedio", f"{avg_riesgo:.1f}/25")
+        # Calcular riesgo promedio desde consecuencias JSON
+        try:
+            riesgos = []
+            for _, inc in df_incidentes.iterrows():
+                if inc.get('consecuencias'):
+                    try:
+                        consecuencias = json.loads(inc['consecuencias']) if isinstance(inc['consecuencias'], str) else inc['consecuencias']
+                        riesgos.append(consecuencias.get('gravedad', 0))
+                    except:
+                        riesgos.append(0)
+                else:
+                    riesgos.append(0)
+            avg_riesgo = sum(riesgos) / len(riesgos) if riesgos else 0
+            st.metric("⚠️ Riesgo Promedio", f"{avg_riesgo:.1f}/9")
+        except:
+            st.metric("⚠️ Riesgo Promedio", "N/A")
     
     with col_kpi4:
         # Calcular TF (Tasa de Frecuencia)
         horas_hombre = 50000  # Simulado - debería venir de sistema de asistencia
-        acc_con_lesion = len(df_incidentes[df_incidentes['consecuencias']['lesiones'] != 'No'])
+        acc_con_lesion = 0
+        try:
+            for _, inc in df_incidentes.iterrows():
+                if inc.get('consecuencias'):
+                    try:
+                        consecuencias = json.loads(inc['consecuencias']) if isinstance(inc['consecuencias'], str) else inc['consecuencias']
+                        if consecuencias.get('lesiones', 'No') != 'No':
+                            acc_con_lesion += 1
+                    except:
+                        pass
+        except:
+            pass
+            
         tf = calcular_tasa_frecuencia(acc_con_lesion, horas_hombre)
         st.metric("📊 Tasa Frecuencia", f"{tf:.2f}")
     
@@ -903,16 +975,37 @@ def dashboard_incidentes(usuario):
     
     # Preparar datos para mostrar
     df_display = df_incidentes.copy()
-    df_display['reportado_por'] = df_display['usuarios']['nombre_completo']
+    
+    # Agregar información del trabajador si existe trabajador_id
+    trabajadores_info = []
+    for _, inc in df_incidentes.iterrows():
+        if inc.get('trabajador_id'):
+            try:
+                trabajador = supabase.table('usuarios').select('nombre_completo').eq('id', inc['trabajador_id']).execute()
+                if trabajador.data:
+                    trabajadores_info.append(trabajador.data[0]['nombre_completo'])
+                else:
+                    trabajadores_info.append('N/A')
+            except:
+                trabajadores_info.append('N/A')
+        else:
+            trabajadores_info.append('N/A')
+    
+    df_display['trabajador'] = trabajadores_info
     
     # Colorear por estado
     def color_estado(val):
-        if val == 'abierto': return 'background-color: #ffcccc'
+        if val == 'reportado': return 'background-color: #ffcccc'
         elif val == 'en_investigacion': return 'background-color: #ffff99'
         elif val == 'analizado': return 'background-color: #cce5ff'
-        else: return 'background-color: #ccffcc'
+        elif val == 'cerrado': return 'background-color: #ccffcc'
+        else: return 'background-color: #f0f0f0'
     
-    styled = df_display[['codigo', 'tipo', 'area', 'fecha_hora', 'nivel_riesgo', 'estado', 'reportado_por']].style.applymap(
+    # Seleccionar solo columnas que existen
+    columnas_mostrar = ['codigo', 'tipo', 'area', 'fecha_hora', 'estado', 'trabajador']
+    columnas_existentes = [col for col in columnas_mostrar if col in df_display.columns]
+    
+    styled = df_display[columnas_existentes].style.applymap(
         color_estado, subset=['estado']
     )
     
