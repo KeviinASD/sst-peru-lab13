@@ -26,8 +26,19 @@ def mostrar(usuario):
         dashboard_riesgos()
 
 def registrar_riesgo(usuario):
-    """Formulario dinámico de evaluación de riesgos"""
     
+    """Formulario dinámico de evaluación de riesgos"""
+    supabase = get_supabase_client() # Obtener la conexión a la base de datos
+
+    # Obtener lista de usuarios de la BD
+    response = supabase.table('usuarios').select('id, nombre_completo, rol').execute()
+    if response.data:
+        usuarios_bd = response.data
+        opciones_responsable = {u['nombre_completo']: u['id'] for u in usuarios_bd}
+    else:
+        opciones_responsable = {}
+
+
     with st.form("form_riesgo", clear_on_submit=True):
         st.subheader("Evaluación de Riesgo")
         
@@ -47,42 +58,80 @@ def registrar_riesgo(usuario):
         
         st.markdown("### Matriz de Riesgo")
         col3, col4 = st.columns(2)
-        
+
         with col3:
-            probabilidad = st.slider("Probabilidad (1-5)", 1, 5, 3,
-                help="1=Muy baja, 5=Muy alta")
-            severidad = st.slider("Severidad (1-5)", 1, 5, 3,
-                help="1=Leve, 5=Catastrófico")
-        
+            probabilidad = st.slider(
+                "Probabilidad (1-5)", 
+                1, 5, 3,
+                help="1 = Muy baja, 5 = Muy alta"
+            )
+            severidad = st.slider(
+                "Severidad (1-5)", 
+                1, 5, 3,
+                help="1 = Leve, 5 = Catastrófico"
+            )
+
+        # CALCULO REACTIVO AQUÍ, SIN SACARLO DEL BLOQUE
         nivel_riesgo = probabilidad * severidad
-        
+
+        if nivel_riesgo >= 15:
+            evaluacion_riesgo = "🚨 RIESGO ALTO - Requiere control inmediato"
+        elif nivel_riesgo >= 8:
+            evaluacion_riesgo = "⚠️ RIESGO MEDIO - Requiere control a corto plazo"
+        else:
+            evaluacion_riesgo = "✅ RIESGO BAJO - Control estándar"
+
         with col4:
-            st.metric("NIVEL DE RIESGO", nivel_riesgo)
-            if nivel_riesgo >= 15:
-                st.error("🚨 RIESGO ALTO - Requiere control inmediato")
-            elif nivel_riesgo >= 8:
-                st.warning("⚠️ RIESGO MEDIO - Requiere control a corto plazo")
-            else:
-                st.success("✅ RIESGO BAJO - Control estándar")
+            controles = st.text_area("Controles Actuales")
         
-        controles = st.text_area("Controles Actuales")
-        responsable = st.selectbox("Responsable", ["Juan Pérez", "María García", "Carlos Ruiz"])
-        
+        #responsable = st.selectbox("Responsable", ["Juan Pérez", "María García", "Carlos Ruiz"])
+        # Selectbox dinámico de responsables
+        responsable_nombre = None
+        if opciones_responsable:
+            responsable_nombre = st.selectbox("Responsable", list(opciones_responsable.keys()))
+            responsable_id = opciones_responsable[responsable_nombre]
+        else:
+            st.warning("No se encontraron usuarios en la base de datos")
+            responsable_id = None
+
         submitted = st.form_submit_button("💾 Guardar Evaluación")
         
         if submitted:
-            guardar_riesgo({
-                'area': area,
-                'puesto_trabajo': puesto,
-                'actividad': actividad,
-                'peligro': peligro,
-                'tipo_peligro': tipo_peligro,
-                'probabilidad': probabilidad,
-                'severidad': severidad,
-                'controles_actuales': controles,
-                'responsable_id': usuario['id']
-            })
-            st.success("✅ Riesgo registrado exitosamente")
+            # Validaciones
+            errores = []
+            
+            if not puesto or puesto.strip() == "":
+                errores.append("⚠️ El campo 'Puesto de Trabajo' es obligatorio")
+            
+            if not actividad or actividad.strip() == "":
+                errores.append("⚠️ El campo 'Actividad' es obligatorio")
+            
+            if not peligro or peligro.strip() == "":
+                errores.append("⚠️ El campo 'Peligro Identificado' es obligatorio")
+            
+            if responsable_id is None:
+                errores.append("⚠️ Debe seleccionar un responsable")
+            
+            if errores:
+                for error in errores:
+                    st.error(error)
+            else:
+                # Guardar riesgo
+                resultado = guardar_riesgo({
+                    'area': area,
+                    'puesto_trabajo': puesto,
+                    'actividad': actividad,
+                    'peligro': peligro,
+                    'tipo_peligro': tipo_peligro,
+                    'probabilidad': probabilidad,
+                    'severidad': severidad,
+                    'evaluacion_riesgo': evaluacion_riesgo,
+                    'controles_actuales': controles,
+                    'responsable_id': responsable_id
+                })
+                
+                if resultado:
+                    mostrar_resumen_riesgo(resultado, responsable_nombre if responsable_nombre else "No asignado")
 
 def guardar_riesgo(data):
     """Guarda en Supabase y dispara webhook de n8n"""
@@ -94,17 +143,44 @@ def guardar_riesgo(data):
     
     try:
         # Insertar en BD
-        supabase.table('riesgos').insert(data).execute()
+        response = supabase.table('riesgos').insert(data).execute()
         
-        # Disparar webhook de n8n
-        import requests
-        requests.post(
-            st.secrets["N8N_WEBHOOK_URL"] + "/riesgo-nuevo",
-            json={"codigo": codigo, "nivel_riesgo": data['probabilidad'] * data['severidad']}
-        )
+        if response.data:
+            return response.data[0]
+        return None
         
     except Exception as e:
         st.error(f"Error al guardar: {e}")
+        return None
+
+def mostrar_resumen_riesgo(riesgo, responsable_nombre):
+    """Muestra un resumen con los principales datos del riesgo guardado"""
+    st.success("✅ Riesgo registrado exitosamente")
+    
+    st.markdown("---")
+    st.markdown("### 📋 Resumen del Riesgo Registrado")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown(f"**Código:** `{riesgo.get('codigo', 'N/A')}`")
+        st.markdown(f"**Área:** {riesgo.get('area', 'N/A')}")
+        st.markdown(f"**Puesto de Trabajo:** {riesgo.get('puesto_trabajo', 'N/A')}")
+        st.markdown(f"**Tipo de Peligro:** {riesgo.get('tipo_peligro', 'N/A')}")
+    
+    with col2:
+        st.markdown(f"**Nivel de Riesgo:** {riesgo.get('nivel_riesgo', 'N/A')}")
+        st.markdown(f"**Evaluación:** {riesgo.get('evaluacion_riesgo', 'N/A')}")
+        st.markdown(f"**Probabilidad:** {riesgo.get('probabilidad', 'N/A')}/5")
+        st.markdown(f"**Severidad:** {riesgo.get('severidad', 'N/A')}/5")
+        st.markdown(f"**Responsable:** {responsable_nombre}")
+    
+    st.markdown("---")
+    
+    with st.expander("📝 Ver Detalles Completos"):
+        st.markdown(f"**Actividad:** {riesgo.get('actividad', 'N/A')}")
+        st.markdown(f"**Peligro Identificado:** {riesgo.get('peligro', 'N/A')}")
+        st.markdown(f"**Controles Actuales:** {riesgo.get('controles_actuales', 'No especificado')}")
 
 def listar_riesgos(usuario):
     """Tabla interactiva de riesgos"""
@@ -120,7 +196,7 @@ def listar_riesgos(usuario):
         filtro_estado = st.selectbox("Estado", ["todos", "pendiente", "en_mitigacion", "controlado"])
     
     # Consulta
-    query = supabase.table('riesgos').select('*, usuarios(nombre_completo)')
+    query = supabase.table('riesgos').select('*, usuarios(nombre_completo, rol)')
     
     if filtro_area:
         query = query.in_('area', filtro_area)
@@ -132,15 +208,31 @@ def listar_riesgos(usuario):
     if response.data:
         df = pd.DataFrame(response.data)
         
+        # Procesar la columna de usuarios para mostrar nombre y rol
+        def formatear_usuario(usuario_data):
+            if usuario_data and isinstance(usuario_data, dict):
+                nombre = usuario_data.get('nombre_completo', 'N/A')
+                rol = usuario_data.get('rol', 'N/A')
+                return f"{nombre} ({rol})"
+            elif usuario_data and isinstance(usuario_data, list) and len(usuario_data) > 0:
+                # Si es una lista, tomar el primer elemento
+                usuario = usuario_data[0]
+                nombre = usuario.get('nombre_completo', 'N/A')
+                rol = usuario.get('rol', 'N/A')
+                return f"{nombre} ({rol})"
+            return "No asignado"
+        
+        df['responsable'] = df['usuarios'].apply(formatear_usuario)
+        
         # Columnas para la tabla
         df_display = df[['codigo', 'area', 'puesto_trabajo', 'peligro', 
-                         'nivel_riesgo', 'estado', 'usuarios']].copy()
+                         'nivel_riesgo', 'estado', 'responsable']].copy()
         
         # Aplicar colores según nivel
         def color_riesgo(val):
-            if val >= 15: return 'background-color: #ffcccc'
-            elif val >= 8: return 'background-color: #ffff99'
-            else: return 'background-color: #ccffcc'
+            if val >= 15: return 'background-color: #ffcccc ; color: black;'
+            elif val >= 8: return 'background-color: #ffff99;color: black;'
+            else: return 'background-color: #ccffcc;color: black;'
         
         df_display = df_display.style.applymap(color_riesgo, subset=['nivel_riesgo'])
         

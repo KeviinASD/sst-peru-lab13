@@ -101,6 +101,8 @@ def cargar_datos_dashboard(filtros):
     """Cargar y procesar datos para el dashboard con caching de 5 min"""
     
     supabase = get_supabase_client()
+
+    
     
     try:
         # Cargar riesgos
@@ -160,15 +162,18 @@ def mostrar_kpi_cards(data):
     with col1:
         if not data['riesgos'].empty and 'estado' in data['riesgos'].columns:
             riesgos_pendientes = len(data['riesgos'][data['riesgos']['estado'] == 'pendiente'])
+            st.metric(
+                label="⚠️ Riesgos Pendientes",
+                value=riesgos_pendientes,
+                delta=f"+{riesgos_pendientes - 5}" if riesgos_pendientes > 5 else f"{riesgos_pendientes}",
+                delta_color="inverse"
+            )
         else:
-            riesgos_pendientes = len(data['riesgos']) if not data['riesgos'].empty else 0
-        
-        st.metric(
-            label="⚠️ Riesgos Pendientes",
-            value=riesgos_pendientes,
-            delta=f"+{riesgos_pendientes - 5}" if riesgos_pendientes > 5 else f"{riesgos_pendientes}",
-            delta_color="inverse"
-        )
+            st.metric(
+                label="⚠️ Riesgos Pendientes",
+                value="0",
+                delta="Sin datos"
+            )
     
     # KPI 2: Incidentes Mes
     with col2:
@@ -185,36 +190,47 @@ def mostrar_kpi_cards(data):
     with col3:
         if not data['epp'].empty and 'fecha_vencimiento' in data['epp'].columns:
             try:
-                epp_vencer = len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']).dt.date <= (datetime.now().date() + timedelta(days=30))])
-            except:
-                epp_vencer = 0
+                fecha_limite = datetime.now().date() + timedelta(days=30)
+                epp_vencer = len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']).dt.date <= fecha_limite])
+                st.metric(
+                    label="🛡️ EPP por Vencer",
+                    value=epp_vencer,
+                    delta=f"{epp_vencer} en 30 días",
+                    delta_color="inverse"
+                )
+            except Exception as e:
+                st.metric(
+                    label="🛡️ EPP por Vencer",
+                    value="N/A",
+                    delta="Error al calcular"
+                )
         else:
-            epp_vencer = 0
-        
-        st.metric(
-            label="🛡️ EPP por Vencer",
-            value=epp_vencer,
-            delta=f"{epp_vencer} en 30 días",
-            delta_color="inverse"
-        )
+            st.metric(
+                label="🛡️ EPP por Vencer",
+                value="0",
+                delta="Sin datos"
+            )
     
     # KPI 4: Hallazgos Abiertos
     with col4:
         if not data['hallazgos'].empty and 'estado' in data['hallazgos'].columns:
             hallazgos_abiertos = len(data['hallazgos'][data['hallazgos']['estado'] == 'abierto'])
+            st.metric(
+                label="📋 Hallazgos Abiertos",
+                value=hallazgos_abiertos,
+                delta=f"{hallazgos_abiertos - 3}" if hallazgos_abiertos > 3 else "✅",
+                delta_color="inverse"
+            )
         else:
-            hallazgos_abiertos = len(data['hallazgos']) if not data['hallazgos'].empty else 0
-        
-        st.metric(
-            label="📋 Hallazgos Abiertos",
-            value=hallazgos_abiertos,
-            delta=f"{hallazgos_abiertos - 3}" if hallazgos_abiertos > 3 else "✅",
-            delta_color="inverse"
-        )
+            st.metric(
+                label="📋 Hallazgos Abiertos",
+                value="0",
+                delta="Sin datos"
+            )
     
     # KPI 5: Cumplimiento Capacitación
     with col5:
-        if not data['capacitaciones'].empty:
+        if not data['capacitaciones'].empty and 'estado' in data['capacitaciones'].columns:
             capac_completadas = len(data['capacitaciones'][data['capacitaciones']['estado'] == 'realizada'])
             capac_total = len(data['capacitaciones'])
             cumplimiento = (capac_completadas / capac_total * 100) if capac_total > 0 else 0
@@ -244,6 +260,10 @@ def mostrar_tendencias(data, filtros):
         return
     
     # Preparar datos mensuales
+    if 'fecha_hora' not in data['incidentes'].columns or 'tipo' not in data['incidentes'].columns:
+        st.info("Los datos de incidentes no tienen las columnas necesarias (fecha_hora, tipo)")
+        return
+    
     data['incidentes']['mes'] = pd.to_datetime(data['incidentes']['fecha_hora']).dt.to_period('M')
     tendencias = data['incidentes'].groupby(['mes', 'tipo']).size().unstack(fill_value=0)
     tendencias.index = tendencias.index.astype(str)
@@ -274,6 +294,13 @@ def mostrar_analisis_riesgos(data):
     
     if data['riesgos'].empty:
         st.info("No hay datos de riesgos")
+        return
+    
+    # Validar columnas necesarias
+    columnas_necesarias = ['area', 'tipo_peligro', 'nivel_riesgo', 'estado', 'codigo', 'peligro']
+    columnas_faltantes = [col for col in columnas_necesarias if col not in data['riesgos'].columns]
+    if columnas_faltantes:
+        st.warning(f"Faltan columnas en los datos de riesgos: {', '.join(columnas_faltantes)}")
         return
     
     col1, col2 = st.columns([2, 1])
@@ -322,6 +349,13 @@ def mostrar_analisis_incidentes(data):
         st.info("No hay datos de incidentes")
         return
     
+    # Validar columnas necesarias
+    columnas_necesarias = ['area', 'tipo', 'fecha_hora']
+    columnas_faltantes = [col for col in columnas_necesarias if col not in data['incidentes'].columns]
+    if columnas_faltantes:
+        st.warning(f"Faltan columnas en los datos de incidentes: {', '.join(columnas_faltantes)}")
+        return
+    
     col1, col2 = st.columns(2)
     
     with col1:
@@ -367,7 +401,7 @@ def mostrar_analisis_inspecciones(data):
     
     with col1:
         # Estado de inspecciones
-        if not data['inspecciones'].empty:
+        if not data['inspecciones'].empty and 'estado' in data['inspecciones'].columns:
             fig = px.histogram(
                 data['inspecciones'],
                 x='estado',
@@ -379,7 +413,7 @@ def mostrar_analisis_inspecciones(data):
     
     with col2:
         # Hallazgos por categoría
-        if not data['hallazgos'].empty:
+        if not data['hallazgos'].empty and 'categoria' in data['hallazgos'].columns:
             hallazgos_cat = data['hallazgos']['categoria'].value_counts().head(10)
             fig2 = px.bar(
                 hallazgos_cat,
@@ -390,22 +424,23 @@ def mostrar_analisis_inspecciones(data):
     
     # Scatter: Hallazgos vs Tiempo de cierre
     if not data['hallazgos'].empty and not data['inspecciones'].empty:
-        merged = data['hallazgos'].merge(
-            data['inspecciones'][['id', 'fecha_realizada']],
-            left_on='inspeccion_id',
-            right_on='id'
-        )
-        if not merged.empty:
-            merged['dias_cierre'] = (pd.to_datetime(merged['fecha_cierre']) - pd.to_datetime(merged['fecha_realizada'])).dt.days
-            
-            fig3 = px.scatter(
-                merged,
-                x='dias_cierre',
-                y='categoria',
-                title="Días para Cierre de Hallazgos",
-                labels={'dias_cierre': 'Días desde inspección', 'categoria': 'Categoría'}
+        if 'inspeccion_id' in data['hallazgos'].columns and 'id' in data['inspecciones'].columns and 'fecha_realizada' in data['inspecciones'].columns:
+            merged = data['hallazgos'].merge(
+                data['inspecciones'][['id', 'fecha_realizada']],
+                left_on='inspeccion_id',
+                right_on='id'
             )
-            st.plotly_chart(fig3, use_container_width=True)
+            if not merged.empty and 'fecha_cierre' in merged.columns and 'categoria' in merged.columns:
+                merged['dias_cierre'] = (pd.to_datetime(merged['fecha_cierre']) - pd.to_datetime(merged['fecha_realizada'])).dt.days
+                
+                fig3 = px.scatter(
+                    merged,
+                    x='dias_cierre',
+                    y='categoria',
+                    title="Días para Cierre de Hallazgos",
+                    labels={'dias_cierre': 'Días desde inspección', 'categoria': 'Categoría'}
+                )
+                st.plotly_chart(fig3, use_container_width=True)
 
 def mostrar_reportes_legales(data, filtros):
     """Reportes oficiales para cumplimiento legal"""
@@ -424,7 +459,11 @@ def mostrar_reportes_legales(data, filtros):
     )
     
     # Calcular tasas
-    accidentes = len(data['incidentes'][data['incidentes']['tipo'] == 'accidente'])
+    if not data['incidentes'].empty and 'tipo' in data['incidentes'].columns:
+        accidentes = len(data['incidentes'][data['incidentes']['tipo'] == 'accidente'])
+    else:
+        accidentes = 0
+    
     dias_perdidos = accidentes * 15  # Simulación (en realidad debería ser campo calculado)
     
     tasa_frecuencia = calcular_tasa_frecuencia(accidentes, horas_hombre_mes)

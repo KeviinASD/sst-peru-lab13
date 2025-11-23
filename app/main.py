@@ -1,5 +1,5 @@
 import streamlit as st
-from app.auth import autenticar_usuario
+from app.auth import autenticar_usuario, cerrar_sesion
 from app.modules import (
     riesgos, inspecciones, capacitaciones, 
     incidentes, epp, documental, reportes
@@ -22,6 +22,8 @@ def main():
     # Sidebar - Navegación
     st.sidebar.title(f"👤 {usuario['nombre_completo']}")
     st.sidebar.markdown(f"**Rol:** {usuario['rol'].upper()}")
+
+    cerrar_sesion()
     
     modulo = st.sidebar.selectbox(
         "Módulos",
