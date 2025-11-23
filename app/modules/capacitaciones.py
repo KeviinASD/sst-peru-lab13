@@ -39,146 +39,111 @@ def mostrar(usuario):
 
 def programar_capacitacion(usuario):
     """Programar nueva capacitación con recordatorios automáticos"""
-    
+
     st.subheader("📅 Programar Nueva Capacitación")
-    
+
     with st.form("form_capacitacion", clear_on_submit=True):
         col1, col2 = st.columns(2)
-        
+
         with col1:
             codigo = st.text_input(
                 "Código de Capacitación",
                 value=f"CAP-{datetime.now().strftime('%Y%m%d')}-",
                 help="Formato: CAP-YYYYMMdd-###"
             )
-            
+
             tema = st.text_input(
                 "Tema de Capacitación",
                 help="Ej: Uso Correcto de EPP, Manejo de Extintores"
             )
-            
+
             area_destino = st.multiselect(
                 "Área(s) Destino",
                 ["Producción", "Almacén", "Oficinas", "Mantenimiento", "Seguridad"],
                 help="Selecciona todos los públicos objetivo"
             )
-        
+
         with col2:
             fecha_programada = st.date_input(
                 "Fecha de Capacitación",
                 min_value=datetime.now().date()
             )
-            
+
             hora = st.time_input(
                 "Hora de Inicio",
                 value=datetime.strptime("09:00", "%H:%M").time()
             )
-            
+
+            # ⚠️ En tu BD duracion_horas es INTEGER
             duracion_horas = st.number_input(
                 "Duración (horas)",
-                min_value=0.5,
-                max_value=8.0,
-                value=2.0,
-                step=0.5
+                min_value=1,
+                max_value=8,
+                value=2,
+                step=1,
+                help="En tu BD solo se guardan horas enteras."
             )
-        
-        # Datos del instructor
+
+        # Instructor (solo esto existe en BD)
         st.markdown("### 👨🏫 Información del Instructor")
-        col3, col4 = st.columns(2)
-        
-        with col3:
-            instructor = st.text_input(
-                "Nombre del Instructor",
-                value=usuario['nombre_completo']
-            )
-            
-            credenciales = st.text_area(
-                "Credenciales/Certificaciones del Instructor",
-                help="Ej: Certificado Instructor SST, Curso de primeros auxilios"
-            )
-        
-        with col4:
-            metodo = st.selectbox(
-                "Método de Capacitación",
-                ["Presencial", "Virtual", "Híbrido", "E-learning"]
-            )
-            
-            ubicacion = st.text_input(
-                "Ubicación/Link",
-                help="Salón de capacitación o URL de videoconferencia"
-            )
-        
-        # Configuración de recordatorios
-        st.markdown("### 🔔 Configuración de Recordatorios")
-        st.info("Los recordatorios se enviarán automáticamente vía n8n")
-        
-        recordatorio_24h = st.checkbox("Recordatorio 24 horas antes", value=True)
-        recordatorio_1h = st.checkbox("Recordatorio 1 hora antes", value=True)
-        
-        # Material preliminar
+
+        instructor = st.text_input(
+            "Nombre del Instructor",
+            value=usuario.get('nombre_completo', '')
+        )
+
+        # Material preliminar (en BD es material_url)
         material_opcional = st.file_uploader(
             "Material Preliminar (opcional)",
             type=['pdf', 'pptx', 'docx'],
             help="Agenda, temario o material de pre lectura"
         )
-        
+
         submitted = st.form_submit_button("📅 Programar Capacitación", type="primary")
-        
-        if submitted:
-            if not tema or not codigo:
-                st.error("❌ Tema y código son obligatorios")
-                return
-            
-            # Combinar fecha y hora
-            fecha_hora = datetime.combine(fecha_programada, hora)
-            
-            capacitacion_data = {
-                'codigo': codigo,
-                'tema': tema,
-                'area_destino': json.dumps(area_destino),
-                'fecha_programada': fecha_hora.isoformat(),
-                'duracion_horas': duracion_horas,
-                'instructor': instructor,
-                'credenciales': credenciales,
-                'metodo': metodo,
-                'ubicacion': ubicacion,
-                'estado': 'programada',
-                'recordatorio_24h': recordatorio_24h,
-                'recordatorio_1h': recordatorio_1h
-            }
-            
-            # Subir material si existe
-            if material_opcional:
-                url_material = subir_archivo_storage(
-                    material_opcional,
-                    bucket='sst-documentos',
-                    carpeta=f'capacitaciones/{codigo}/material/'
-                )
-                capacitacion_data['material_preliminar_url'] = url_material
-            
-            # Guardar en BD
-            result = guardar_capacitacion(capacitacion_data)
-            
-            if result:
-                st.success(f"✅ Capacitación programada: {codigo}")
-                
-                # Disparar webhook de n8n para recordatorios
-                try:
-                    requests.post(
-                        st.secrets["N8N_WEBHOOK_URL"] + "/capacitacion-programada",
-                        json={
-                            "capacitacion_id": result['id'],
-                            "codigo": codigo,
-                            "tema": tema,
-                            "fecha": fecha_hora.isoformat(),
-                            "recordatorios": {
-                                "24h": recordatorio_24h,
-                                "1h": recordatorio_1h
-                            }
-                        }
-                    )
-                except:
-                    st.warning("⚠️ No se pudo conectar con n8n para recordatorios")
+
+    # -----------------------
+    # Acción fuera del form
+    # -----------------------
+    if submitted:
+        if not tema.strip() or not codigo.strip():
+            st.error("❌ Tema y código son obligatorios")
+            return
+
+        # area_destino en BD es VARCHAR(100).
+        # Guardamos lista como string JSON (puede truncarse si es muy largo).
+        area_str = json.dumps(area_destino)
+
+        # Combinar fecha y hora
+        fecha_hora = datetime.combine(fecha_programada, hora)
+
+        capacitacion_data = {
+            'codigo': codigo,
+            'tema': tema,
+            'area_destino': area_str,
+            'fecha_programada': fecha_hora.isoformat(),
+            'duracion_horas': int(duracion_horas),
+            'instructor': instructor,
+            'estado': 'programada'
+        }
+
+        # Subir material si existe
+        if material_opcional:
+            url_material = subir_archivo_storage(
+                material_opcional,
+                bucket='sst-documentos',
+                carpeta=f'capacitaciones/{codigo}/material/'
+            )
+            if url_material:
+                # ✅ en tu BD se llama material_url
+                capacitacion_data['material_url'] = url_material
+
+        # Guardar en BD
+        result = guardar_capacitacion(capacitacion_data)
+
+        if result:
+            st.success(f"✅ Capacitación programada: {codigo}")
+        else:
+            st.error("❌ No se pudo guardar la capacitación.")
 
 def guardar_capacitacion(data):
     """Guardar capacitación en Supabase"""
@@ -193,119 +158,139 @@ def guardar_capacitacion(data):
 
 def gestionar_asistentes(usuario):
     """Gestionar lista de asistentes y registro de asistencia"""
-    
+
     st.subheader("👥 Gestionar Asistentes a Capacitaciones")
-    
+
     supabase = get_supabase_client()
-    
+
     # Cargar capacitaciones programadas
     capacitaciones = supabase.table('capacitaciones').select(
         '*, asistentes_capacitacion(*, usuarios(*))'
     ).eq('estado', 'programada').execute().data
-    
+
     if not capacitaciones:
         st.info("ℹ️ No hay capacitaciones programadas")
         return
-    
+
     # Seleccionar capacitación
     cap_seleccionada = st.selectbox(
         "Seleccionar Capacitación",
         options=capacitaciones,
-        format_func=lambda x: f"{x['codigo']} - {x['tema'][:50]}... ({x['fecha_programada']})"
+        format_func=lambda x: f"{x.get('codigo','SIN-COD')} - {str(x.get('tema',''))[:50]}... ({x.get('fecha_programada','')})"
     )
-    
+
     if not cap_seleccionada:
         return
-    
+
+    # ------- FIX: método puede no existir en algunas filas -------
+    metodo_val = (
+        cap_seleccionada.get('metodo')
+        or cap_seleccionada.get('modalidad')
+        or cap_seleccionada.get('metodo_capacitacion')
+        or "No especificado"
+    )
+
     # Mostrar detalles
     with st.expander("📋 Detalles de la Capacitación", expanded=True):
         st.json({
-            "Código": cap_seleccionada['codigo'],
-            "Tema": cap_seleccionada['tema'],
-            "Fecha": cap_seleccionada['fecha_programada'],
-            "Instructor": cap_seleccionada['instructor'],
-            "Método": cap_seleccionada['metodo']
+            "Código": cap_seleccionada.get('codigo'),
+            "Tema": cap_seleccionada.get('tema'),
+            "Fecha": cap_seleccionada.get('fecha_programada'),
+            "Instructor": cap_seleccionada.get('instructor'),
+            "Método": metodo_val
         })
-    
+
     # Cargar trabajadores disponibles
     trabajadores = supabase.table('usuarios').select(
         'id', 'nombre_completo', 'area', 'rol'
     ).eq('activo', True).neq('rol', 'admin').execute().data
-    
+
     if not trabajadores:
         st.warning("⚠️ No hay trabajadores activos")
         return
-    
+
     df_trabajadores = pd.DataFrame(trabajadores)
-    
+
     # Tabla de asistentes actuales
     st.markdown("### 📋 Asistentes Asignados")
-    
+
     asistentes_actuales = cap_seleccionada.get('asistentes_capacitacion', [])
-    
+
     if asistentes_actuales:
         df_asistentes = pd.DataFrame([
             {
-                'ID': a['trabajador_id'],
-                'Nombre': a['usuarios']['nombre_completo'],
-                'Asistió': a['asistio'],
+                'ID': a.get('trabajador_id'),
+                'Nombre': (a.get('usuarios') or {}).get('nombre_completo', 'Sin nombre'),
+                'Asistió': a.get('asistio', False),
                 'Calificación': a.get('calificacion', 'N/A')
             } for a in asistentes_actuales
         ])
-        
+
         st.dataframe(df_asistentes, use_container_width=True)
-        
-        # Botón para descargar lista
+
         if st.button("📥 Descargar Lista de Asistentes"):
             excel_data = df_asistentes.to_csv(index=False).encode('utf-8')
             st.download_button(
                 "Descargar CSV",
                 excel_data,
-                f"asistentes_{cap_seleccionada['codigo']}.csv",
+                f"asistentes_{cap_seleccionada.get('codigo','cap')}.csv",
                 "text/csv"
             )
     else:
         st.info("ℹ️ No hay asistentes asignados aún")
-    
+
     # Agregar nuevos asistentes
     st.markdown("### ➕ Agregar Asistentes")
-    
-    # Filtrar trabajadores por área si aplica
-    area_capacitacion = json.loads(cap_seleccionada['area_destino'])
-    trabajadores_filtrados = df_trabajadores[
-        df_trabajadores['area'].isin(area_capacitacion)
-    ] if area_capacitacion else df_trabajadores
-    
-    # Multiselect para agregar
+
+    # ------- FIX: area_destino puede venir str o list -------
+    area_raw = cap_seleccionada.get('area_destino', [])
+    if isinstance(area_raw, str):
+        try:
+            area_capacitacion = json.loads(area_raw)
+        except:
+            area_capacitacion = []
+    elif isinstance(area_raw, list):
+        area_capacitacion = area_raw
+    else:
+        area_capacitacion = []
+
+    trabajadores_filtrados = (
+        df_trabajadores[df_trabajadores['area'].isin(area_capacitacion)]
+        if area_capacitacion else df_trabajadores
+    )
+
     nuevos_asistentes = st.multiselect(
         "Seleccionar Trabajadores",
         options=trabajadores_filtrados['id'].tolist(),
         format_func=lambda x: f"{df_trabajadores[df_trabajadores['id'] == x]['nombre_completo'].iloc[0]} ({df_trabajadores[df_trabajadores['id'] == x]['area'].iloc[0]})"
     )
-    
+
     if nuevos_asistentes:
         if st.button("📅 Agregar Asistentes Seleccionados", type="primary"):
             agregar_asistentes(cap_seleccionada['id'], nuevos_asistentes)
             st.success(f"✅ {len(nuevos_asistentes)} asistentes agregados")
             st.rerun()
-    
+
     # Registrar asistencia el día de la capacitación
     st.markdown("### ✅ Registrar Asistencia")
-    
-    if datetime.now().date() == pd.to_datetime(cap_seleccionada['fecha_programada']).date():
+
+    fecha_cap = pd.to_datetime(cap_seleccionada.get('fecha_programada'), errors="coerce")
+    if fecha_cap is not pd.NaT and datetime.now().date() == fecha_cap.date():
         st.success("🎯 Hoy es el día de la capacitación. Puedes registrar asistencia.")
-        
+
         for asistente in asistentes_actuales:
-            with st.expander(f"📝 {asistente['usuarios']['nombre_completo']}"):
+            nombre_as = (asistente.get('usuarios') or {}).get('nombre_completo', 'Asistente')
+
+            with st.expander(f"📝 {nombre_as}"):
                 col1, col2 = st.columns(2)
-                
+
                 with col1:
                     asistio = st.checkbox(
                         "Asistió",
-                        value=asistente['asistio'],
+                        value=asistente.get('asistio', False),
                         key=f"asist_{asistente['id']}"
                     )
-                
+
                 with col2:
                     calificacion = st.number_input(
                         "Calificación (1-5)",
@@ -314,14 +299,14 @@ def gestionar_asistentes(usuario):
                         value=asistente.get('calificacion', 3),
                         key=f"calif_{asistente['id']}"
                     )
-                
+
                 feedback = st.text_area(
                     "Feedback del Asistente",
                     value=asistente.get('feedback', ''),
                     key=f"feed_{asistente['id']}",
                     help="Comentarios sobre la capacitación"
                 )
-                
+
                 if st.button("💾 Guardar Asistencia", key=f"save_{asistente['id']}"):
                     actualizar_asistencia(
                         asistente['id'],
@@ -331,7 +316,7 @@ def gestionar_asistentes(usuario):
                     )
                     st.success("✅ Asistencia registrada")
     else:
-        st.info(f"ℹ️ La capacitación es el {cap_seleccionada['fecha_programada']}. No puedes registrar asistencia aún.")
+        st.info(f"ℹ️ La capacitación es el {cap_seleccionada.get('fecha_programada')}. No puedes registrar asistencia aún.")
 
 def agregar_asistentes(capacitacion_id, trabajador_ids):
     """Agregar múltiples asistentes a capacitación"""
