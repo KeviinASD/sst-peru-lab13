@@ -353,7 +353,7 @@ def guardar_inspeccion_programada(data):
         return False
 
     # 2) Notificar a n8n (sin romper el guardado)
-    try:
+    """ try:
         payload = {
             "inspeccion_id": result.data[0]['id'],
             "area": data['area'],
@@ -371,7 +371,7 @@ def guardar_inspeccion_programada(data):
         r.raise_for_status()
 
     except Exception as e:
-        st.warning(f"Inspección guardada, pero falló notificación a n8n: {e}")
+        st.warning(f"Inspección guardada, pero falló notificación a n8n: {e}") """
 
     return True
 
