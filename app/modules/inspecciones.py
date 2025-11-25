@@ -630,9 +630,9 @@ def guardar_resultado_inspeccion(inspeccion_id, respuestas, hallazgos, observaci
         # Guardar respuestas en JSON (puede crear tabla 'respuestas_inspeccion' si se necesita historial)
         supabase.table('inspecciones').update({
             'estado': estado,
-            'fecha_realizada': datetime.now().date(),
-            'observaciones': observaciones,
-            'respuestas_json': json.dumps(respuestas)
+            'fecha_realizada': datetime.now().date().isoformat(),
+            # 'observaciones': observaciones,
+            # 'respuestas_json': json.dumps(respuestas)
         }).eq('id', inspeccion_id).execute()
         
         # Crear hallazgos

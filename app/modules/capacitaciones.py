@@ -205,6 +205,8 @@ def gestionar_asistentes(usuario):
         'id', 'nombre_completo', 'area', 'rol'
     ).eq('activo', True).neq('rol', 'admin').execute().data
 
+    print("Estos son los trabajadores: ", trabajadores)
+
     if not trabajadores:
         st.warning("⚠️ No hay trabajadores activos")
         return
