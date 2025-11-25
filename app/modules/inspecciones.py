@@ -94,9 +94,13 @@ def crear_checklist(usuario):
                     "categoria": categoria
                 })
                 st.success(f"✅ Pregunta agregada: {pregunta_texto[:50]}...")
-                # limpiar inputs temporales
-                st.session_state.pregunta_temp = ""
-                st.session_state.categoria_temp = "General"
+                # Limpiar campos usando del en lugar de asignación directa
+                if 'pregunta_temp' in st.session_state:
+                    del st.session_state.pregunta_temp
+                if 'categoria_temp' in st.session_state:
+                    del st.session_state.categoria_temp
+                if 'tipo_temp' in st.session_state:
+                    del st.session_state.tipo_temp
                 st.rerun()
 
     # ---------------------------------------------------------
@@ -174,10 +178,9 @@ def crear_checklist(usuario):
         guardar_checklist({
             'nombre': nombre,
             'area': area,
-            'periodicidad': periodicidad,
+            # 'periodicidad': periodicidad,
             'activo': activa,
-            'items': json.dumps(st.session_state.preguntas),
-            'creado_por': usuario['id']
+            'items': json.dumps(st.session_state.preguntas)
         })
 
         st.session_state.preguntas = []
