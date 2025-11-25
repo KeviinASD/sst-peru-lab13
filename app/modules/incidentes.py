@@ -235,6 +235,9 @@ def reportar_incidente(usuario):
             
             # Guardar incidente
             incidente_id = guardar_incidente(incidente_data)
+
+            print("Este es el id del incidente guardado: ", incidente_id)
+
             
             if incidente_id:
                 # Subir evidencia
@@ -339,10 +342,25 @@ def notificar_incidente(data):
         
         supervisor_email = supervisor[0]['email'] if supervisor else "sst@empresa.com"
         supervisor_id = supervisor[0]['id'] if supervisor else None
+
+        print("Este es el correo del supervisor: ", supervisor_email)
         
-        # Enviar a n8n
+        # Extraer gravedad de las consecuencias
+        gravedad_numerica = 0
+        try:
+            if data.get('consecuencias'):
+                consecuencias = json.loads(data['consecuencias']) if isinstance(data['consecuencias'], str) else data['consecuencias']
+                gravedad_numerica = consecuencias.get('gravedad', 0)
+        except:
+            gravedad_numerica = 0
+        
+        # Enviar a n8n 
+        base_url = st.secrets.get("N8N_WEBHOOK_URL", "https://santos-n8n.siu9f2.easypanel.host/webhook")
+        webhook_url = base_url + "/incidente-reportado"
+        print("Este es el webhook url: ", webhook_url)
+        print("Gravedad a enviar: ", gravedad_numerica)
         requests.post(
-            st.secrets.get("N8N_WEBHOOK_URL", "http://localhost:5678") + "/incidente-reportado",
+            webhook_url,
             json={
                 'codigo': data['codigo'],
                 'tipo': data['tipo'],
@@ -350,7 +368,8 @@ def notificar_incidente(data):
                 'descripcion': data['descripcion'],
                 'puesto_trabajo': data.get('puesto_trabajo', ''),
                 'supervisor_email': supervisor_email,
-                'supervisor_id': supervisor_id
+                'supervisor_id': supervisor_id,
+                'gravedad': gravedad_numerica
             },
             timeout=5
         )
@@ -645,8 +664,9 @@ def crear_accion_correctiva_automatica(incidente_id, recomendaciones, responsabl
                 }).execute()
         
         # Notificar vía n8n
+        webhook_url = st.secrets.get("N8N_WEBHOOK_URL", "https://santos-n8n.siu9f2.easypanel.host/webhook/incidente-reportado")
         requests.post(
-            st.secrets["N8N_WEBHOOK_URL"] + "/acciones-creadas",
+            webhook_url.replace("/incidente-reportado", "/acciones-creadas"),
             json={"incidente_id": incidente_id, "num_acciones": len(acciones)}
         )
         
@@ -825,8 +845,9 @@ def actualizar_accion(accion_id, data, evidencia_archivo):
         
         # Notificar cierre
         if data['estado'] == 'implementada':
+            webhook_url = st.secrets.get("N8N_WEBHOOK_URL", "https://santos-n8n.siu9f2.easypanel.host/webhook/incidente-reportado")
             requests.post(
-                st.secrets["N8N_WEBHOOK_URL"] + "/accion-cerrada",
+                webhook_url.replace("/incidente-reportado", "/accion-cerrada"),
                 json={"accion_id": accion_id}
             )
             
