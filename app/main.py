@@ -22,24 +22,61 @@ def main():
     # Sidebar - Navegación
     st.sidebar.title(f"👤 {usuario['nombre_completo']}")
     st.sidebar.markdown(f"**Rol:** {usuario['rol'].upper()}")
+    st.sidebar.divider()
 
+    # Inicializar módulo seleccionado en session_state
+    if 'modulo_seleccionado' not in st.session_state:
+        st.session_state.modulo_seleccionado = "🏠 Dashboard"
+    
+    # Botones de navegación
+    st.sidebar.markdown("### 📑 Módulos")
+    
+    if st.sidebar.button("🏠 Dashboard", use_container_width=True, 
+                        type="primary" if st.session_state.modulo_seleccionado == "🏠 Dashboard" else "secondary"):
+        st.session_state.modulo_seleccionado = "🏠 Dashboard"
+        st.rerun()
+    
+    if st.sidebar.button("⚠️ Gestión de Riesgos", use_container_width=True,
+                        type="primary" if st.session_state.modulo_seleccionado == "⚠️ Gestión de Riesgos" else "secondary"):
+        st.session_state.modulo_seleccionado = "⚠️ Gestión de Riesgos"
+        st.rerun()
+    
+    if st.sidebar.button("📋 Inspecciones", use_container_width=True,
+                        type="primary" if st.session_state.modulo_seleccionado == "📋 Inspecciones" else "secondary"):
+        st.session_state.modulo_seleccionado = "📋 Inspecciones"
+        st.rerun()
+    
+    if st.sidebar.button("🎓 Capacitaciones", use_container_width=True,
+                        type="primary" if st.session_state.modulo_seleccionado == "🎓 Capacitaciones" else "secondary"):
+        st.session_state.modulo_seleccionado = "🎓 Capacitaciones"
+        st.rerun()
+    
+    if st.sidebar.button("🚨 Incidentes", use_container_width=True,
+                        type="primary" if st.session_state.modulo_seleccionado == "🚨 Incidentes" else "secondary"):
+        st.session_state.modulo_seleccionado = "🚨 Incidentes"
+        st.rerun()
+    
+    if st.sidebar.button("🛡️ Gestión de EPP", use_container_width=True,
+                        type="primary" if st.session_state.modulo_seleccionado == "🛡️ Gestión de EPP" else "secondary"):
+        st.session_state.modulo_seleccionado = "🛡️ Gestión de EPP"
+        st.rerun()
+    
+    if st.sidebar.button("📚 Documentos", use_container_width=True,
+                        type="primary" if st.session_state.modulo_seleccionado == "📚 Documentos" else "secondary"):
+        st.session_state.modulo_seleccionado = "📚 Documentos"
+        st.rerun()
+    
+    if st.sidebar.button("📊 Reportes", use_container_width=True,
+                        type="primary" if st.session_state.modulo_seleccionado == "📊 Reportes" else "secondary"):
+        st.session_state.modulo_seleccionado = "📊 Reportes"
+        st.rerun()
+    
+    st.sidebar.divider()
     cerrar_sesion()
     
-    modulo = st.sidebar.selectbox(
-        "Módulos",
-        [
-            "🏠 Dashboard",
-            "⚠️ Gestión de Riesgos",
-            "📋 Inspecciones",
-            "🎓 Capacitaciones",
-            "🚨 Incidentes",
-            "🛡️ Gestión de EPP",
-            "📚 Documentos",
-            "📊 Reportes"
-        ]
-    )
-    
     # Router de módulos
+    modulo = st.session_state.modulo_seleccionado
+    
     if modulo == "🏠 Dashboard":
         from app.modules import dashboard
         dashboard.mostrar(usuario)
