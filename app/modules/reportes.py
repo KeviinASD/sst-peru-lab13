@@ -386,24 +386,32 @@ def mostrar_exportar_enviar(data, filtros):
         
         if st.button(f"📥 Generar {formato_export}", type="primary"):
             try:
-                if formato_export == "Excel":
-                    archivo = generar_reporte_excel(data, tipo_reporte, filtros)
-                    st.download_button(
-                        label="⬇️ Descargar Excel",
-                        data=archivo['data'],
-                        file_name=archivo['filename'],
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:  # PDF
-                    archivo = generar_reporte_pdf(data, tipo_reporte, filtros)
-                    st.download_button(
-                        label="⬇️ Descargar PDF",
-                        data=archivo['data'],
-                        file_name=archivo['filename'],
-                        mime="application/pdf"
-                    )
+                with st.spinner(f"Generando reporte {formato_export}..."):
+                    if formato_export == "Excel":
+                        archivo = generar_reporte_excel(data, tipo_reporte, filtros)
+                        st.success("✅ Reporte Excel generado correctamente")
+                        st.download_button(
+                            label="⬇️ Descargar Excel",
+                            data=archivo['data'],
+                            file_name=archivo['filename'],
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_excel"
+                        )
+                    else:  # PDF
+                        archivo = generar_reporte_pdf(data, tipo_reporte, filtros)
+                        st.success("✅ Reporte PDF generado correctamente")
+                        st.download_button(
+                            label="⬇️ Descargar PDF",
+                            data=archivo['data'],
+                            file_name=archivo['filename'],
+                            mime="application/pdf",
+                            key="download_pdf"
+                        )
             except Exception as e:
-                st.error(f"Error generando reporte: {e}")
+                st.error(f"❌ Error generando reporte: {str(e)}")
+                import traceback
+                with st.expander("Detalles del error"):
+                    st.code(traceback.format_exc())
     
     with col2:
         st.markdown("### 📧 Enviar Automáticamente")
@@ -475,7 +483,7 @@ def generar_reporte_excel(data, tipo, filtros):
     }
 
 def generar_reporte_pdf(data, tipo, filtros):
-    """Generar reporte PDF profesional con ReportLab"""
+    """Generar reporte PDF profesional con ReportLab - Incluye todos los reportes cuando es Completo"""
     output = io.BytesIO()
     doc = SimpleDocTemplate(output, pagesize=A4)
     
@@ -483,58 +491,384 @@ def generar_reporte_pdf(data, tipo, filtros):
     elements = []
     styles = getSampleStyleSheet()
     
-    # Título
+    # Estilos personalizados
+    # Usar estilos base disponibles o crear desde cero si no existen
+    try:
+        base_title = styles['Title']
+    except KeyError:
+        base_title = styles['Normal']
+    
+    try:
+        base_heading1 = styles['Heading1']
+    except KeyError:
+        base_heading1 = styles['Normal']
+    
+    try:
+        base_heading2 = styles['Heading2']
+    except KeyError:
+        base_heading2 = styles['Normal']
+    
     title_style = ParagraphStyle(
         'CustomTitle',
-        parent=styles['title'],
+        parent=base_title,
         fontSize=24,
         alignment=1,  # Center
-        color=colors.HexColor('#1e3a8a'),
+        textColor=colors.HexColor('#1e3a8a'),
         spaceAfter=30
     )
     
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=base_heading1,
+        fontSize=16,
+        textColor=colors.HexColor('#1e3a8a'),
+        spaceAfter=12,
+        spaceBefore=20
+    )
+    
+    subheading_style = ParagraphStyle(
+        'CustomSubHeading',
+        parent=base_heading2,
+        fontSize=14,
+        textColor=colors.HexColor('#2563eb'),
+        spaceAfter=8,
+        spaceBefore=12
+    )
+    
+    # Portada
     elements.append(Paragraph("REPORTE DE SEGURIDAD Y SALUD EN EL TRABAJO", title_style))
-    elements.append(Paragraph(f"Generado el: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", styles['normal']))
-    elements.append(Paragraph(f"Ley 29783 - Período: {filtros['fecha_inicio']} al {filtros['fecha_fin']}", styles['normal']))
-    elements.append(Spacer(1, 30))
+    elements.append(Paragraph(f"Generado el: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", styles['Normal']))
+    elements.append(Paragraph(f"Ley 29783 - Período: {filtros['fecha_inicio']} al {filtros['fecha_fin']}", styles['Normal']))
+    elements.append(Spacer(1, 40))
     
-    # KP
-    kpi_data = [
-        ['Métrica', 'Valor', 'Interpretación'],
-        ['Total Incidentes', str(len(data['incidentes'])), 'Ver detalle en tabla'],
-        ['Riesgos Críticos', str(len(data['riesgos'][data['riesgos']['nivel_riesgo'] >= 15])), 'Requieren atención inmediata'],
-        ['EPP por Vencer', str(len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) <= datetime.now() + timedelta(days=30)]) if not data['epp'].empty and 'fecha_vencimiento' in data['epp'].columns else 0), 'Programar renovación']
-    ]
-    
-    kpi_table = Table(kpi_data, colWidths=[200, 100, 200])
-    kpi_table.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a8a')),
-        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0,0), (-1,0), 12),
-        ('BOTTOMPADDING', (0,0), (-1,0), 12),
-        ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),
-        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6'))
-    ]))
-    
-    elements.append(kpi_table)
-    elements.append(Spacer(1, 20))
-    
-    # Tabla de incidentes
-    if not data['incidentes'].empty:
-        elements.append(Paragraph("DETALLE DE INCIDENTES", styles['heading2']))
-        incidentes_pdf = data['incidentes'][['codigo', 'tipo', 'area', 'descripcion']].head(10)
-        incidentes_data = [incidentes_pdf.columns.tolist()] + incidentes_pdf.values.tolist()
-        incidentes_table = Table(incidentes_data, colWidths=[80, 80, 100, 250])
-        incidentes_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+    # Si es tipo "Completo", incluir todos los reportes
+    if tipo == "Completo":
+        # ========== 1. RESUMEN EJECUTIVO ==========
+        elements.append(Paragraph("1. RESUMEN EJECUTIVO DE SST", heading_style))
+        
+        # KPIs principales
+        total_incidentes = len(data['incidentes'])
+        riesgos_criticos = len(data['riesgos'][data['riesgos']['nivel_riesgo'] >= 15]) if not data['riesgos'].empty and 'nivel_riesgo' in data['riesgos'].columns else 0
+        epp_vencido = len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) < datetime.now()]) if not data['epp'].empty and 'fecha_vencimiento' in data['epp'].columns else 0
+        capac_realizada = len(data['capacitaciones'][data['capacitaciones']['estado'] == 'realizada']) if not data['capacitaciones'].empty and 'estado' in data['capacitaciones'].columns else 0
+        capac_total = len(data['capacitaciones']) if not data['capacitaciones'].empty else 0
+        cumplimiento = (capac_realizada / capac_total * 100) if capac_total > 0 else 0
+        
+        kpi_data = [
+            ['Métrica', 'Valor', 'Interpretación'],
+            ['Total Incidentes', str(total_incidentes), 'Total de eventos registrados'],
+            ['Riesgos Críticos (≥15)', str(riesgos_criticos), 'Requieren atención inmediata'],
+            ['EPP Vencidos', str(epp_vencido), 'Necesitan renovación urgente'],
+            ['% Cumplimiento Capacitaciones', f"{cumplimiento:.1f}%", f"{capac_realizada}/{capac_total} completadas"]
+        ]
+        
+        kpi_table = Table(kpi_data, colWidths=[200, 100, 200])
+        kpi_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a8a')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 11),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),
+            ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+            ('FONTSIZE', (0,1), (-1,-1), 9)
+        ]))
+        elements.append(kpi_table)
+        elements.append(Spacer(1, 20))
+        
+        # Tendencia de incidentes (tabla resumen mensual)
+        if not data['incidentes'].empty and 'fecha_hora' in data['incidentes'].columns:
+            try:
+                elements.append(Paragraph("Tendencia de Incidentes por Mes", subheading_style))
+                data_incidentes_copy = data['incidentes'].copy()
+                data_incidentes_copy['mes'] = pd.to_datetime(data_incidentes_copy['fecha_hora']).dt.to_period('M').astype(str)
+                tendencia = data_incidentes_copy.groupby('mes').size().reset_index(name='cantidad')
+                tendencia_data = [['Mes', 'Cantidad']] + tendencia.values.tolist()
+                tendencia_table = Table(tendencia_data, colWidths=[200, 100])
+                tendencia_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                    ('FONTSIZE', (0,0), (-1,-1), 9)
+                ]))
+                elements.append(tendencia_table)
+                elements.append(Spacer(1, 20))
+            except Exception as e:
+                elements.append(Paragraph(f"No se pudo generar la tendencia: {str(e)}", styles['Normal']))
+                elements.append(Spacer(1, 20))
+        
+        # ========== 2. REPORTE LEGAL SUNAFIL ==========
+        elements.append(Paragraph("2. REPORTE LEGAL SUNAFIL - LEY 29783", heading_style))
+        
+        # Valores por defecto para indicadores legales
+        horas_hombre = 50000
+        num_trabajadores = 200
+        accidentes = len(data['incidentes'][data['incidentes']['tipo'] == 'accidente']) if not data['incidentes'].empty and 'tipo' in data['incidentes'].columns else 0
+        incidentes = len(data['incidentes'][data['incidentes']['tipo'] == 'incidente']) if not data['incidentes'].empty and 'tipo' in data['incidentes'].columns else 0
+        enfermedades = len(data['incidentes'][data['incidentes']['tipo'] == 'enfermedad_laboral']) if not data['incidentes'].empty and 'tipo' in data['incidentes'].columns else 0
+        
+        # Cálculo de tasas
+        tasa_frecuencia = (accidentes * 1_000_000) / horas_hombre if horas_hombre > 0 else 0
+        dias_perdidos = accidentes * 15  # Simulación
+        tasa_severidad = (dias_perdidos * 1_000_000) / horas_hombre if horas_hombre > 0 else 0
+        indice_incidencia = (accidentes / num_trabajadores) * 100 if num_trabajadores > 0 else 0
+        
+        elements.append(Paragraph("Indicadores de Seguridad Obligatorios", subheading_style))
+        indicadores_data = [
+            ['Indicador', 'Valor', 'Unidad', 'Meta Legal', 'Cumple'],
+            ['Tasa de Frecuencia', f"{tasa_frecuencia:.2f}", 'accidents/1Mh-h', '< 5.0', '✅' if tasa_frecuencia < 5 else '❌'],
+            ['Tasa de Severidad', f"{tasa_severidad:.2f}", 'días/1Mh-h', '< 100', '✅' if tasa_severidad < 100 else '❌'],
+            ['Índice de Incidencia', f"{indice_incidencia:.2f}", '%', '< 1.0', '✅' if indice_incidencia < 1 else '❌'],
+            ['N° Accidentes', str(accidentes), 'eventos', '0', '✅' if accidentes == 0 else '❌'],
+            ['N° Incidentes', str(incidentes), 'eventos', 'No especificado', '-'],
+            ['N° Enfermedades Laborales', str(enfermedades), 'eventos', 'No especificado', '-']
+        ]
+        
+        indicadores_table = Table(indicadores_data, colWidths=[150, 80, 100, 100, 70])
+        indicadores_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a8a')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 10),
+            ('BOTTOMPADDING', (0,0), (-1,0), 10),
+            ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),
+            ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+            ('FONTSIZE', (0,1), (-1,-1), 8),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8f9fa')])
+        ]))
+        elements.append(indicadores_table)
+        elements.append(Spacer(1, 15))
+        
+        # Cumplimiento normativo
+        elements.append(Paragraph("Cumplimiento Normativo", subheading_style))
+        requisitos_data = [
+            ['Artículo', 'Requisito', 'Estado'],
+            ['Art. 24', 'Registros documentados', '✅ Cumplido' if len(data['documentos']) > 0 else '⚠️ Pendiente'],
+            ['Art. 26-28', 'Evaluación de riesgos', '✅ Cumplido' if len(data['riesgos']) > 0 else '⚠️ Pendiente'],
+            ['Art. 29', 'Gestión EPP', '✅ Cumplido' if len(data['epp']) > 0 else '⚠️ Pendiente'],
+            ['Art. 31', 'Capacitaciones registradas', '✅ Cumplido' if len(data['capacitaciones']) > 0 else '⚠️ Pendiente'],
+            ['Art. 33-34', 'Sistema de incidentes', '✅ Cumplido' if len(data['incidentes']) > 0 else '⚠️ Pendiente']
+        ]
+        
+        requisitos_table = Table(requisitos_data, colWidths=[100, 200, 200])
+        requisitos_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563eb')),
             ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
             ('ALIGN', (0,0), (-1,-1), 'LEFT'),
             ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 10),
+            ('BOTTOMPADDING', (0,0), (-1,0), 10),
+            ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),
+            ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+            ('FONTSIZE', (0,1), (-1,-1), 9)
+        ]))
+        elements.append(requisitos_table)
+        elements.append(Spacer(1, 20))
+        
+        # ========== 3. MATRIZ DE RIESGOS ==========
+        elements.append(Paragraph("3. MATRIZ DE RIESGOS", heading_style))
+        
+        if not data['riesgos'].empty:
+            # Riesgos críticos
+            elements.append(Paragraph("Riesgos Críticos (Nivel ≥ 15)", subheading_style))
+            criticos = data['riesgos'][data['riesgos']['nivel_riesgo'] >= 15] if 'nivel_riesgo' in data['riesgos'].columns else pd.DataFrame()
+            
+            if not criticos.empty:
+                # Seleccionar columnas disponibles
+                cols_disponibles = ['codigo', 'area', 'puesto_trabajo', 'peligro', 'nivel_riesgo', 'estado']
+                cols_finales = [col for col in cols_disponibles if col in criticos.columns]
+                criticos_pdf = criticos[cols_finales].head(20)  # Limitar a 20 para el PDF
+                
+                criticos_data = [criticos_pdf.columns.tolist()] + criticos_pdf.values.tolist()
+                # Convertir todos los valores a string
+                criticos_data = [[str(cell) for cell in row] for row in criticos_data]
+                
+                ancho_col = 500 / len(cols_finales)
+                criticos_table = Table(criticos_data, colWidths=[ancho_col] * len(cols_finales))
+                criticos_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#dc2626')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,0), 9),
+                    ('BOTTOMPADDING', (0,0), (-1,0), 8),
+                    ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),
+                    ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                    ('FONTSIZE', (0,1), (-1,-1), 8),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8f9fa')])
+                ]))
+                elements.append(criticos_table)
+            else:
+                elements.append(Paragraph("✅ No hay riesgos críticos registrados", styles['Normal']))
+            
+            elements.append(Spacer(1, 15))
+            
+            # Resumen de riesgos por área
+            elements.append(Paragraph("Resumen de Riesgos por Área", subheading_style))
+            if 'area' in data['riesgos'].columns:
+                riesgos_area = data['riesgos'].groupby('area').size().reset_index(name='cantidad')
+                riesgos_area_data = [['Área', 'Cantidad']] + riesgos_area.values.tolist()
+                riesgos_area_table = Table(riesgos_area_data, colWidths=[300, 200])
+                riesgos_area_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                    ('FONTSIZE', (0,0), (-1,-1), 9)
+                ]))
+                elements.append(riesgos_area_table)
+        else:
+            elements.append(Paragraph("No hay datos de riesgos disponibles", styles['Normal']))
+        
+        elements.append(Spacer(1, 20))
+        
+        # ========== 4. ANÁLISIS ESTADÍSTICO ==========
+        elements.append(Paragraph("4. ANÁLISIS ESTADÍSTICO", heading_style))
+        
+        # Distribución de incidentes por área
+        if not data['incidentes'].empty and 'area' in data['incidentes'].columns:
+            elements.append(Paragraph("Distribución de Incidentes por Área", subheading_style))
+            try:
+                incidentes_area = data['incidentes']['area'].value_counts().reset_index()
+                incidentes_area.columns = ['Área', 'Cantidad']
+                incidentes_area_data = [incidentes_area.columns.tolist()] + incidentes_area.values.tolist()
+                incidentes_area_table = Table(incidentes_area_data, colWidths=[300, 200])
+                incidentes_area_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                    ('FONTSIZE', (0,0), (-1,-1), 9)
+                ]))
+                elements.append(incidentes_area_table)
+                elements.append(Spacer(1, 15))
+            except Exception:
+                elements.append(Paragraph("No se pudo generar la distribución por área", styles['Normal']))
+        
+        # Distribución por tipo de peligro
+        if not data['riesgos'].empty and 'tipo_peligro' in data['riesgos'].columns:
+            elements.append(Paragraph("Distribución por Tipo de Peligro", subheading_style))
+            peligros = data['riesgos']['tipo_peligro'].value_counts().reset_index()
+            peligros.columns = ['Tipo de Peligro', 'Cantidad']
+            peligros_data = [peligros.columns.tolist()] + peligros.values.tolist()
+            peligros_table = Table(peligros_data, colWidths=[300, 200])
+            peligros_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                ('FONTSIZE', (0,0), (-1,-1), 9)
+            ]))
+            elements.append(peligros_table)
+            elements.append(Spacer(1, 15))
+        
+        # Análisis de hallazgos
+        if not data['hallazgos'].empty:
+            elements.append(Paragraph("Análisis de Hallazgos de Inspección", subheading_style))
+            if 'categoria' in data['hallazgos'].columns and 'estado' in data['hallazgos'].columns:
+                hallazgos_resumen = data['hallazgos'].groupby(['categoria', 'estado']).size().reset_index(name='cantidad')
+                hallazgos_data = [['Categoría', 'Estado', 'Cantidad']] + hallazgos_resumen.values.tolist()
+                hallazgos_table = Table(hallazgos_data, colWidths=[200, 150, 150])
+                hallazgos_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                    ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                    ('FONTSIZE', (0,0), (-1,-1), 9)
+                ]))
+                elements.append(hallazgos_table)
+        
+        elements.append(Spacer(1, 20))
+        
+        # ========== 5. DETALLE DE INCIDENTES ==========
+        elements.append(Paragraph("5. DETALLE DE INCIDENTES", heading_style))
+        
+        if not data['incidentes'].empty:
+            cols_disponibles = ['codigo', 'tipo', 'fecha_hora', 'area', 'descripcion']
+            cols_finales = [col for col in cols_disponibles if col in data['incidentes'].columns]
+            if cols_finales and not data['incidentes'][cols_finales].empty:
+                incidentes_pdf = data['incidentes'][cols_finales].head(30)  # Limitar a 30 para el PDF
+                
+                incidentes_data = [incidentes_pdf.columns.tolist()] + incidentes_pdf.values.tolist()
+                # Convertir todos los valores a string y truncar descripciones largas
+                incidentes_data_clean = []
+                for row in incidentes_data:
+                    clean_row = []
+                    for cell in row:
+                        cell_str = str(cell)
+                        if len(cell_str) > 50:
+                            cell_str = cell_str[:47] + "..."
+                        clean_row.append(cell_str)
+                    incidentes_data_clean.append(clean_row)
+                
+                ancho_col = 500 / len(cols_finales)
+                incidentes_table = Table(incidentes_data_clean, colWidths=[ancho_col] * len(cols_finales))
+                incidentes_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                    ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                    ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0,0), (-1,0), 9),
+                    ('BOTTOMPADDING', (0,0), (-1,0), 8),
+                    ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),
+                    ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                    ('FONTSIZE', (0,1), (-1,-1), 8),
+                    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#f8f9fa')])
+                ]))
+                elements.append(incidentes_table)
+            else:
+                elements.append(Paragraph("No hay columnas disponibles para mostrar incidentes", styles['Normal']))
+        else:
+            elements.append(Paragraph("No hay incidentes registrados en el período", styles['Normal']))
+    
+    else:
+        # Para otros tipos de reporte, mantener formato original simplificado
+        kpi_data = [
+            ['Métrica', 'Valor', 'Interpretación'],
+            ['Total Incidentes', str(len(data['incidentes'])), 'Ver detalle en tabla'],
+            ['Riesgos Críticos', str(len(data['riesgos'][data['riesgos']['nivel_riesgo'] >= 15]) if not data['riesgos'].empty else 0), 'Requieren atención inmediata'],
+            ['EPP por Vencer', str(len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) <= datetime.now() + timedelta(days=30)]) if not data['epp'].empty and 'fecha_vencimiento' in data['epp'].columns else 0), 'Programar renovación']
+        ]
+        
+        kpi_table = Table(kpi_data, colWidths=[200, 100, 200])
+        kpi_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1e3a8a')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+            ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 12),
+            ('BOTTOMPADDING', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.HexColor('#f8f9fa')),
             ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6'))
         ]))
-        elements.append(incidentes_table)
+        
+        elements.append(kpi_table)
+        elements.append(Spacer(1, 20))
+        
+        # Tabla de incidentes
+        if not data['incidentes'].empty:
+            elements.append(Paragraph("DETALLE DE INCIDENTES", styles['Heading2']))
+            cols_disponibles = ['codigo', 'tipo', 'area', 'descripcion']
+            cols_finales = [col for col in cols_disponibles if col in data['incidentes'].columns]
+            incidentes_pdf = data['incidentes'][cols_finales].head(10)
+            incidentes_data = [incidentes_pdf.columns.tolist()] + incidentes_pdf.values.tolist()
+            incidentes_table = Table(incidentes_data, colWidths=[80, 80, 100, 250])
+            incidentes_table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6'))
+            ]))
+            elements.append(incidentes_table)
     
     # Build PDF
     doc.build(elements)
@@ -542,7 +876,7 @@ def generar_reporte_pdf(data, tipo, filtros):
     
     return {
         'data': output.read(),
-        'filename': f"Reporte_SST_Legal_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        'filename': f"Reporte_SST_{tipo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     }
 
 def configurar_webhook_n8n(data, filtros, email, frecuencia):
