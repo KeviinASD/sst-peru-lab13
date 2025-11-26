@@ -554,6 +554,12 @@ def alertas_vencimientos(usuario):
         '*, usuarios(nombre_completo)'
     ).lte('fecha_vigencia', datetime.now().date() + timedelta(days=30)).execute().data
     
+    # Calcular días restantes para cada documento
+    hoy = datetime.now().date()
+    for doc in documentos_criticos:
+        fecha_vigencia = pd.to_datetime(doc['fecha_vigencia']).date()
+        doc['dias_restantes'] = (fecha_vigencia - hoy).days
+    
     if documentos_criticos:
         df_criticos = pd.DataFrame(documentos_criticos)
         df_criticos['dias_restantes'] = (pd.to_datetime(df_criticos['fecha_vigencia']).dt.date - datetime.now().date()).apply(lambda x: x.days)
