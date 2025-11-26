@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 from datetime import datetime, timedelta
 from app.utils.supabase_client import get_supabase_client
 from app.auth import requerir_rol
@@ -482,6 +483,36 @@ def generar_reporte_excel(data, tipo, filtros):
         'filename': f"Reporte_SST_{tipo}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     }
 
+def plotly_fig_to_image(fig, width=800, height=500):
+    """Convertir gráfico Plotly a imagen para incluir en PDF"""
+    try:
+        # Configurar el gráfico para exportación
+        fig.update_layout(
+            width=width,
+            height=height,
+            margin=dict(l=50, r=50, t=50, b=50)
+        )
+        # Convertir a imagen PNG (requiere kaleido o orca instalado)
+        # Si no está disponible, intentar con formato SVG o retornar None
+        try:
+            img_bytes = pio.to_image(fig, format='png', width=width, height=height, engine='kaleido')
+        except Exception:
+            # Si kaleido no está disponible, intentar sin especificar engine
+            try:
+                img_bytes = pio.to_image(fig, format='png', width=width, height=height)
+            except Exception:
+                # Si falla completamente, retornar None
+                return None
+        
+        # Crear objeto Image de ReportLab desde bytes
+        img_buffer = io.BytesIO(img_bytes)
+        # Escalar para que quepa en el PDF (A4 tiene ~595 puntos de ancho)
+        scale_factor = min(500 / width, 1.0)  # Asegurar que no exceda 500 puntos
+        return Image(img_buffer, width=width*scale_factor, height=height*scale_factor)
+    except Exception as e:
+        # Si falla la conversión, retornar None silenciosamente
+        return None
+
 def generar_reporte_pdf(data, tipo, filtros):
     """Generar reporte PDF profesional con ReportLab - Incluye todos los reportes cuando es Completo"""
     output = io.BytesIO()
@@ -577,13 +608,28 @@ def generar_reporte_pdf(data, tipo, filtros):
         elements.append(kpi_table)
         elements.append(Spacer(1, 20))
         
-        # Tendencia de incidentes (tabla resumen mensual)
+        # Tendencia de incidentes (gráfico y tabla)
         if not data['incidentes'].empty and 'fecha_hora' in data['incidentes'].columns:
             try:
                 elements.append(Paragraph("Tendencia de Incidentes por Mes", subheading_style))
                 data_incidentes_copy = data['incidentes'].copy()
                 data_incidentes_copy['mes'] = pd.to_datetime(data_incidentes_copy['fecha_hora']).dt.to_period('M').astype(str)
                 tendencia = data_incidentes_copy.groupby('mes').size().reset_index(name='cantidad')
+                
+                # Crear gráfico de línea
+                fig_tendencia = px.line(tendencia, x='mes', y='cantidad', 
+                                       title="Incidentes por Mes",
+                                       labels={'mes': 'Mes', 'cantidad': 'N° Incidentes'})
+                fig_tendencia.update_traces(mode='lines+markers')
+                fig_tendencia.update_xaxes(tickangle=45)
+                
+                # Agregar gráfico al PDF
+                img_tendencia = plotly_fig_to_image(fig_tendencia, width=700, height=400)
+                if img_tendencia:
+                    elements.append(img_tendencia)
+                    elements.append(Spacer(1, 10))
+                
+                # Agregar tabla también
                 tendencia_data = [['Mes', 'Cantidad']] + tendencia.values.tolist()
                 tendencia_table = Table(tendencia_data, colWidths=[200, 100])
                 tendencia_table.setStyle(TableStyle([
@@ -707,6 +753,38 @@ def generar_reporte_pdf(data, tipo, filtros):
             
             elements.append(Spacer(1, 15))
             
+            # Matriz de riesgo (heatmap)
+            if 'probabilidad' in data['riesgos'].columns and 'severidad' in data['riesgos'].columns:
+                try:
+                    elements.append(Paragraph("Mapa de Calor de Riesgo", subheading_style))
+                    # Crear matriz 5x5
+                    matriz = data['riesgos'].groupby(['probabilidad', 'severidad']).size().unstack(fill_value=0)
+                    probabilidades = [1, 2, 3, 4, 5]
+                    severidades = [1, 2, 3, 4, 5]
+                    matriz = matriz.reindex(index=probabilidades, columns=severidades, fill_value=0)
+                    
+                    # Crear gráfico de heatmap
+                    labels_x = ['Baja (1)', 'Media (2)', 'Moderada (3)', 'Alta (4)', 'Muy Alta (5)']
+                    labels_y = ['Casi Nula (1)', 'Remota (2)', 'Posible (3)', 'Probable (4)', 'Muy Probable (5)']
+                    
+                    fig_matriz = px.imshow(
+                        matriz,
+                        x=labels_x,
+                        y=labels_y,
+                        title="Matriz de Riesgo: Probabilidad vs Severidad",
+                        color_continuous_scale="Reds",
+                        aspect="auto"
+                    )
+                    fig_matriz.update_xaxes(title="Severidad")
+                    fig_matriz.update_yaxes(title="Probabilidad")
+                    
+                    img_matriz = plotly_fig_to_image(fig_matriz, width=700, height=500)
+                    if img_matriz:
+                        elements.append(img_matriz)
+                        elements.append(Spacer(1, 15))
+                except Exception:
+                    pass  # Si falla, continuar sin el gráfico
+            
             # Resumen de riesgos por área
             elements.append(Paragraph("Resumen de Riesgos por Área", subheading_style))
             if 'area' in data['riesgos'].columns:
@@ -736,6 +814,16 @@ def generar_reporte_pdf(data, tipo, filtros):
             try:
                 incidentes_area = data['incidentes']['area'].value_counts().reset_index()
                 incidentes_area.columns = ['Área', 'Cantidad']
+                
+                # Crear gráfico de barras
+                fig_area = px.bar(incidentes_area, x='Cantidad', y='Área', 
+                                 orientation='h', title="Incidentes por Área")
+                img_area = plotly_fig_to_image(fig_area, width=700, height=400)
+                if img_area:
+                    elements.append(img_area)
+                    elements.append(Spacer(1, 10))
+                
+                # Agregar tabla también
                 incidentes_area_data = [incidentes_area.columns.tolist()] + incidentes_area.values.tolist()
                 incidentes_area_table = Table(incidentes_area_data, colWidths=[300, 200])
                 incidentes_area_table.setStyle(TableStyle([
@@ -754,29 +842,22 @@ def generar_reporte_pdf(data, tipo, filtros):
         # Distribución por tipo de peligro
         if not data['riesgos'].empty and 'tipo_peligro' in data['riesgos'].columns:
             elements.append(Paragraph("Distribución por Tipo de Peligro", subheading_style))
-            peligros = data['riesgos']['tipo_peligro'].value_counts().reset_index()
-            peligros.columns = ['Tipo de Peligro', 'Cantidad']
-            peligros_data = [peligros.columns.tolist()] + peligros.values.tolist()
-            peligros_table = Table(peligros_data, colWidths=[300, 200])
-            peligros_table.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
-                ('FONTSIZE', (0,0), (-1,-1), 9)
-            ]))
-            elements.append(peligros_table)
-            elements.append(Spacer(1, 15))
-        
-        # Análisis de hallazgos
-        if not data['hallazgos'].empty:
-            elements.append(Paragraph("Análisis de Hallazgos de Inspección", subheading_style))
-            if 'categoria' in data['hallazgos'].columns and 'estado' in data['hallazgos'].columns:
-                hallazgos_resumen = data['hallazgos'].groupby(['categoria', 'estado']).size().reset_index(name='cantidad')
-                hallazgos_data = [['Categoría', 'Estado', 'Cantidad']] + hallazgos_resumen.values.tolist()
-                hallazgos_table = Table(hallazgos_data, colWidths=[200, 150, 150])
-                hallazgos_table.setStyle(TableStyle([
+            try:
+                peligros = data['riesgos']['tipo_peligro'].value_counts().reset_index()
+                peligros.columns = ['Tipo de Peligro', 'Cantidad']
+                
+                # Crear gráfico de pastel
+                fig_peligros = px.pie(data['riesgos'], names='tipo_peligro', 
+                                     title="Tipos de Peligros Identificados")
+                img_peligros = plotly_fig_to_image(fig_peligros, width=600, height=400)
+                if img_peligros:
+                    elements.append(img_peligros)
+                    elements.append(Spacer(1, 10))
+                
+                # Agregar tabla también
+                peligros_data = [peligros.columns.tolist()] + peligros.values.tolist()
+                peligros_table = Table(peligros_data, colWidths=[300, 200])
+                peligros_table.setStyle(TableStyle([
                     ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
                     ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
                     ('ALIGN', (0,0), (-1,-1), 'CENTER'),
@@ -784,7 +865,53 @@ def generar_reporte_pdf(data, tipo, filtros):
                     ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
                     ('FONTSIZE', (0,0), (-1,-1), 9)
                 ]))
-                elements.append(hallazgos_table)
+                elements.append(peligros_table)
+                elements.append(Spacer(1, 15))
+            except Exception:
+                elements.append(Paragraph("No se pudo generar la distribución por tipo de peligro", styles['Normal']))
+                elements.append(Spacer(1, 15))
+        
+        # Análisis de hallazgos
+        if not data['hallazgos'].empty:
+            elements.append(Paragraph("Análisis de Hallazgos de Inspección", subheading_style))
+            if 'categoria' in data['hallazgos'].columns and 'estado' in data['hallazgos'].columns:
+                try:
+                    # Crear gráfico sunburst
+                    fig_hallazgos = px.sunburst(data['hallazgos'], path=['categoria', 'estado'], 
+                                               title="Hallazgos por Categoría y Estado",
+                                               height=500)
+                    img_hallazgos = plotly_fig_to_image(fig_hallazgos, width=600, height=500)
+                    if img_hallazgos:
+                        elements.append(img_hallazgos)
+                        elements.append(Spacer(1, 10))
+                    
+                    # Agregar tabla también
+                    hallazgos_resumen = data['hallazgos'].groupby(['categoria', 'estado']).size().reset_index(name='cantidad')
+                    hallazgos_data = [['Categoría', 'Estado', 'Cantidad']] + hallazgos_resumen.values.tolist()
+                    hallazgos_table = Table(hallazgos_data, colWidths=[200, 150, 150])
+                    hallazgos_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                        ('FONTSIZE', (0,0), (-1,-1), 9)
+                    ]))
+                    elements.append(hallazgos_table)
+                except Exception:
+                    # Si falla el gráfico, solo mostrar tabla
+                    hallazgos_resumen = data['hallazgos'].groupby(['categoria', 'estado']).size().reset_index(name='cantidad')
+                    hallazgos_data = [['Categoría', 'Estado', 'Cantidad']] + hallazgos_resumen.values.tolist()
+                    hallazgos_table = Table(hallazgos_data, colWidths=[200, 150, 150])
+                    hallazgos_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#6c757d')),
+                        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+                        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                        ('GRID', (0,0), (-1,-1), 1, colors.HexColor('#dee2e6')),
+                        ('FONTSIZE', (0,0), (-1,-1), 9)
+                    ]))
+                    elements.append(hallazgos_table)
         
         elements.append(Spacer(1, 20))
         
