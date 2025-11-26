@@ -94,9 +94,13 @@ def crear_checklist(usuario):
                     "categoria": categoria
                 })
                 st.success(f"✅ Pregunta agregada: {pregunta_texto[:50]}...")
-                # limpiar inputs temporales
-                st.session_state.pregunta_temp = ""
-                st.session_state.categoria_temp = "General"
+                # Limpiar campos usando del en lugar de asignación directa
+                if 'pregunta_temp' in st.session_state:
+                    del st.session_state.pregunta_temp
+                if 'categoria_temp' in st.session_state:
+                    del st.session_state.categoria_temp
+                if 'tipo_temp' in st.session_state:
+                    del st.session_state.tipo_temp
                 st.rerun()
 
     # ---------------------------------------------------------
@@ -174,10 +178,9 @@ def crear_checklist(usuario):
         guardar_checklist({
             'nombre': nombre,
             'area': area,
-            'periodicidad': periodicidad,
+            # 'periodicidad': periodicidad,
             'activo': activa,
-            'items': json.dumps(st.session_state.preguntas),
-            'creado_por': usuario['id']
+            'items': json.dumps(st.session_state.preguntas)
         })
 
         st.session_state.preguntas = []
@@ -350,7 +353,7 @@ def guardar_inspeccion_programada(data):
         return False
 
     # 2) Notificar a n8n (sin romper el guardado)
-    try:
+    """ try:
         payload = {
             "inspeccion_id": result.data[0]['id'],
             "area": data['area'],
@@ -368,7 +371,7 @@ def guardar_inspeccion_programada(data):
         r.raise_for_status()
 
     except Exception as e:
-        st.warning(f"Inspección guardada, pero falló notificación a n8n: {e}")
+        st.warning(f"Inspección guardada, pero falló notificación a n8n: {e}") """
 
     return True
 
@@ -627,9 +630,9 @@ def guardar_resultado_inspeccion(inspeccion_id, respuestas, hallazgos, observaci
         # Guardar respuestas en JSON (puede crear tabla 'respuestas_inspeccion' si se necesita historial)
         supabase.table('inspecciones').update({
             'estado': estado,
-            'fecha_realizada': datetime.now().date(),
-            'observaciones': observaciones,
-            'respuestas_json': json.dumps(respuestas)
+            'fecha_realizada': datetime.now().date().isoformat(),
+            # 'observaciones': observaciones,
+            # 'respuestas_json': json.dumps(respuestas)
         }).eq('id', inspeccion_id).execute()
         
         # Crear hallazgos

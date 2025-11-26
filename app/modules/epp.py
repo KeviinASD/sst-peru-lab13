@@ -372,8 +372,8 @@ def renovar_epp(usuario):
     
     # Filtrar por vencimiento (próximos 30 días o ya vencidos)
     df_asignaciones = pd.DataFrame(asignaciones)
-    df_asignaciones['fecha_vencimiento'] = pd.to_datetime(df_asignaciones['fecha_vencimiento']).dt.date
-    df_asignaciones['dias_restantes'] = (df_asignaciones['fecha_vencimiento'] - datetime.now().date()).dt.days
+    df_asignaciones['fecha_vencimiento'] = pd.to_datetime(df_asignaciones['fecha_vencimiento'])
+    df_asignaciones['dias_restantes'] = (df_asignaciones['fecha_vencimiento'] - pd.Timestamp.now()).dt.days
     
     df_vencidas = df_asignaciones[
         (df_asignaciones['dias_restantes'] <= 30) | 
@@ -529,6 +529,8 @@ def dashboard_epp(usuario):
         query = query.eq('estado', estado_filtro)
     
     asignaciones = query.execute().data
+
+    print("======estas son las asignaciones; ", asignaciones)
     
     if not asignaciones:
         st.info("ℹ️ No hay asignaciones con los filtros seleccionados")
@@ -557,20 +559,29 @@ def dashboard_epp(usuario):
     df_display['Fecha Entrega'] = pd.to_datetime(df_display['fecha_entrega']).dt.strftime('%d/%m/%Y')
     df_display['Fecha Vencimiento'] = pd.to_datetime(df_display['fecha_vencimiento']).dt.strftime('%d/%m/%Y')
     
-    # Colorear por estado
+    # Seleccionar solo columnas para mostrar
+    columnas_mostrar = ['EPP', 'Trabajador', 'Área', 'Fecha Entrega', 'Fecha Vencimiento', 'estado']
+    df_mostrar = df_display[columnas_mostrar].copy()
+    
+    # Colorear por estado basado en dias_restantes del DataFrame original
     def colorear_epp(row):
-        if row['estado'] == 'vencido' or row['dias_restantes'] < 0:
+        # Obtener el índice de la fila para buscar dias_restantes en df_display
+        idx = row.name
+        dias_restantes = df_display.loc[idx, 'dias_restantes']
+        
+        if row['estado'] == 'vencido' or dias_restantes < 0:
             return ['background-color: #ffcccc'] * len(row)
-        elif row['dias_restantes'] <= 30:
+        elif dias_restantes <= 30:
             return ['background-color: #ffff99'] * len(row)
         else:
             return ['background-color: #ccffcc'] * len(row)
     
-    styled = df_display.style.apply(colorear_epp, axis=1)
+    # Aplicar estilo
+    styled = df_mostrar.style.apply(colorear_epp, axis=1)
     
     st.dataframe(
-        styled[['EPP', 'Trabajador', 'Área', 'Fecha Entrega', 'Fecha Vencimiento', 'estado']],
-        use_container_width=True
+        styled,
+        width='stretch'  # Reemplaza use_container_width=True
     )
     
     # Exportar inventario
