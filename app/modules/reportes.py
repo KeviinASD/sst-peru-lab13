@@ -129,8 +129,28 @@ def cargar_datos_reporte(filtros):
             query_riesgos = query_riesgos.in_('area', filtros['areas'])
         riesgos = query_riesgos.execute().data
         
-        # Cargar EPP
-        epp = supabase.table('epp_asignaciones').select('*, usuarios(nombre_completo), epp_catalogo(*)').execute().data
+        # Cargar EPP - especificar relación del trabajador para evitar ambigüedad
+        epp_raw = supabase.table('epp_asignaciones').select(
+            '*, '
+            'usuarios!epp_asignaciones_trabajador_id_fkey(nombre_completo), '
+            'epp_catalogo(*)'
+        ).execute().data
+        
+        # Procesar datos de EPP para aplanar estructura (compatibilidad con código existente)
+        epp = []
+        usuarios_col = 'usuarios!epp_asignaciones_trabajador_id_fkey'
+        for item in epp_raw:
+            # Crear copia completa del item (incluye todos los campos de epp_asignaciones)
+            item_processed = dict(item)  # Usar dict() para asegurar copia completa
+            # Extraer nombre_completo de la relación de usuarios
+            if usuarios_col in item_processed and isinstance(item_processed[usuarios_col], dict):
+                item_processed['nombre_completo'] = item_processed[usuarios_col].get('nombre_completo', '')
+            # Extraer nombre del catálogo de EPP
+            if 'epp_catalogo' in item_processed and isinstance(item_processed['epp_catalogo'], dict):
+                item_processed['epp_nombre'] = item_processed['epp_catalogo'].get('nombre', '')
+            # Los campos directos de epp_asignaciones (fecha_vencimiento, fecha_entrega, etc.) 
+            # ya están en item_processed por la copia
+            epp.append(item_processed)
         
         # Cargar capacitaciones
         capacitaciones = supabase.table('capacitaciones').select('*, asistentes_capacitacion(*)').execute().data
@@ -171,7 +191,10 @@ def mostrar_resumen_ejecutivo(data, filtros):
         st.metric("⚠️ Riesgos Críticos", riesgos_criticos, delta_color="inverse")
     
     with col3:
-        epp_vencido = len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) < datetime.now()])
+        if not data['epp'].empty and 'fecha_vencimiento' in data['epp'].columns:
+            epp_vencido = len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) < datetime.now()])
+        else:
+            epp_vencido = 0
         st.metric("🛡️ EPP Vencidos", epp_vencido, delta_color="inverse")
     
     with col4:
@@ -183,10 +206,13 @@ def mostrar_resumen_ejecutivo(data, filtros):
     # Gráfico de tendencia de incidentes
     st.subheader("Tendencia de Incidentes")
     if not data['incidentes'].empty:
-        data['incidentes']['mes'] = pd.to_datetime(data['incidentes']['fecha_hora']).dt.to_period('M')
-        tendencia = data['incidentes'].groupby('mes').size()
-        fig = px.line(tendencia, title="Incidentes por Mes", labels={'value': 'N° Incidentes'})
+        # Convertir a período mensual y luego a string para evitar problemas de serialización
+        data['incidentes']['mes'] = pd.to_datetime(data['incidentes']['fecha_hora']).dt.to_period('M').astype(str)
+        tendencia = data['incidentes'].groupby('mes').size().reset_index(name='cantidad')
+        fig = px.line(tendencia, x='mes', y='cantidad', title="Incidentes por Mes", 
+                     labels={'mes': 'Mes', 'cantidad': 'N° Incidentes'})
         fig.update_traces(mode='lines+markers')
+        fig.update_xaxes(tickangle=45)
         st.plotly_chart(fig, use_container_width=True)
 
 def mostrar_reporte_legal_sunafil(data, filtros):
@@ -277,14 +303,30 @@ def mostrar_matriz_riesgos_interactiva(data, filtros):
     # Matriz de riesgo (probabilidad vs severidad)
     st.subheader("📊 Mapa de Calor de Riesgo")
     
-    # Crear matriz 5x5
+    # Crear matriz 5x5 asegurando que tenga todas las combinaciones
     matriz = riesgos_filtrados.groupby(['probabilidad', 'severidad']).size().unstack(fill_value=0)
     
-    fig = px.imshow(matriz.values,
-                    x=['Baja (1)', 'Media (2)', 'Moderada (3)', 'Alta (4)', 'Muy Alta (5)'],
-                    y=['Casi Nula (1)', 'Remota (2)', 'Posible (3)', 'Probable (4)', 'Muy Probable (5)'],
-                    title="Matriz de Riesgo: Probabilidad vs Severidad",
-                    color_continuous_scale="Reds")
+    # Asegurar que la matriz tenga exactamente 5x5 (probabilidad 1-5, severidad 1-5)
+    # Reindexar para incluir todos los valores posibles
+    probabilidades = [1, 2, 3, 4, 5]
+    severidades = [1, 2, 3, 4, 5]
+    
+    # Reindexar filas (probabilidad) y columnas (severidad) para asegurar 5x5
+    matriz = matriz.reindex(index=probabilidades, columns=severidades, fill_value=0)
+    
+    # Etiquetas para los ejes
+    labels_x = ['Baja (1)', 'Media (2)', 'Moderada (3)', 'Alta (4)', 'Muy Alta (5)']
+    labels_y = ['Casi Nula (1)', 'Remota (2)', 'Posible (3)', 'Probable (4)', 'Muy Probable (5)']
+    
+    # Crear el gráfico usando la matriz directamente (no .values) para que Plotly maneje los índices
+    fig = px.imshow(
+        matriz,
+        x=labels_x,
+        y=labels_y,
+        title="Matriz de Riesgo: Probabilidad vs Severidad",
+        color_continuous_scale="Reds",
+        aspect="auto"
+    )
     fig.update_xaxes(title="Severidad")
     fig.update_yaxes(title="Probabilidad")
     st.plotly_chart(fig, use_container_width=True)
@@ -386,7 +428,7 @@ def generar_reporte_excel(data, tipo, filtros):
             'Valor': [
                 len(data['incidentes']),
                 len(data['riesgos'][data['riesgos']['estado'] == 'pendiente']),
-                len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) <= datetime.now() + timedelta(days=30)]),
+                len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) <= datetime.now() + timedelta(days=30)]) if not data['epp'].empty and 'fecha_vencimiento' in data['epp'].columns else 0,
                 len(data['hallazgos'][data['hallazgos']['estado'] == 'abierto']),
                 len(data['capacitaciones'][data['capacitaciones']['estado'] == 'realizada'])
             ]
@@ -414,8 +456,10 @@ def generar_reporte_excel(data, tipo, filtros):
         
         # Hoja 5: EPP
         if not data['epp'].empty:
-            epp_export = data['epp'][['nombre_completo', 'epp_nombre', 'fecha_entrega', 
-                                    'fecha_vencimiento']].copy()
+            # Verificar que las columnas existan antes de exportar
+            epp_cols = ['nombre_completo', 'epp_nombre', 'fecha_entrega', 'fecha_vencimiento']
+            epp_cols_disponibles = [col for col in epp_cols if col in data['epp'].columns]
+            epp_export = data['epp'][epp_cols_disponibles].copy() if epp_cols_disponibles else pd.DataFrame()
             epp_export.to_excel(writer, sheet_name='EPP', index=False)
         
         # Hoja 6: Capacitaciones (Art. 31)
@@ -459,7 +503,7 @@ def generar_reporte_pdf(data, tipo, filtros):
         ['Métrica', 'Valor', 'Interpretación'],
         ['Total Incidentes', str(len(data['incidentes'])), 'Ver detalle en tabla'],
         ['Riesgos Críticos', str(len(data['riesgos'][data['riesgos']['nivel_riesgo'] >= 15])), 'Requieren atención inmediata'],
-        ['EPP por Vencer', str(len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) <= datetime.now() + timedelta(days=30)])), 'Programar renovación']
+        ['EPP por Vencer', str(len(data['epp'][pd.to_datetime(data['epp']['fecha_vencimiento']) <= datetime.now() + timedelta(days=30)]) if not data['epp'].empty and 'fecha_vencimiento' in data['epp'].columns else 0), 'Programar renovación']
     ]
     
     kpi_table = Table(kpi_data, colWidths=[200, 100, 200])

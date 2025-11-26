@@ -264,7 +264,7 @@ def mostrar_tendencias(data, filtros):
         st.info("Los datos de incidentes no tienen las columnas necesarias (fecha_hora, tipo)")
         return
     
-    data['incidentes']['mes'] = pd.to_datetime(data['incidentes']['fecha_hora']).dt.to_period('M')
+    data['incidentes']['mes'] = pd.to_datetime(data['incidentes']['fecha_hora']).dt.to_period('M').astype(str)
     tendencias = data['incidentes'].groupby(['mes', 'tipo']).size().unstack(fill_value=0)
     tendencias.index = tendencias.index.astype(str)
     
@@ -307,15 +307,20 @@ def mostrar_analisis_riesgos(data):
     
     with col1:
         # Heatmap de riesgos por área y tipo
-        heatmap_data = data['riesgos'].groupby(['area', 'tipo_peligro'])['nivel_riesgo'].mean().unstack()
+        heatmap_data = data['riesgos'].groupby(['area', 'tipo_peligro'])['nivel_riesgo'].mean().unstack(fill_value=0)
         
-        fig = px.imshow(
-            heatmap_data,
-            title="Mapa de Calor: Nivel de Riesgo Promedio",
-            labels=dict(x="Tipo de Peligro", y="Área", color="Nivel Riesgo"),
-            color_continuous_scale="RdYlGn_r"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        # Verificar que hay datos antes de crear el gráfico
+        if not heatmap_data.empty and heatmap_data.shape[0] > 0 and heatmap_data.shape[1] > 0:
+            fig = px.imshow(
+                heatmap_data,
+                title="Mapa de Calor: Nivel de Riesgo Promedio",
+                labels=dict(x="Tipo de Peligro", y="Área", color="Nivel Riesgo"),
+                color_continuous_scale="RdYlGn_r",
+                aspect="auto"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No hay suficientes datos para generar el mapa de calor")
     
     with col2:
         # Distribución por severidad

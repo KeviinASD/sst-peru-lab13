@@ -359,9 +359,11 @@ def renovar_epp(usuario):
     
     supabase = get_supabase_client()
     
-    # Cargar asignaciones activas por vencer o vencidas
+    # Cargar asignaciones activas por vencer o vencidas - especificar relación del trabajador
     asignaciones = supabase.from_('epp_asignaciones').select(
-        '*, epp_catalogo(*), usuarios(id, nombre_completo, area)'
+        '*, '
+        'epp_catalogo(*), '
+        'usuarios!epp_asignaciones_trabajador_id_fkey(id, nombre_completo, area)'
     ).eq('estado', 'activo').execute().data
     
     if not asignaciones:
@@ -382,6 +384,9 @@ def renovar_epp(usuario):
         st.success("✅ No hay EPP por renovar en los próximos 30 días")
         return
     
+    # Normalizar nombre de columna de usuarios
+    usuarios_col = 'usuarios!epp_asignaciones_trabajador_id_fkey' if 'usuarios!epp_asignaciones_trabajador_id_fkey' in df_vencidas.columns else 'usuarios'
+    
     # Mostrar tabla
     st.markdown("#### ⚠️ EPP por Renovar/Reasignar")
     
@@ -390,8 +395,9 @@ def renovar_epp(usuario):
             col1, col2, col3, col4 = st.columns([2, 3, 2, 2])
             
             with col1:
-                st.write(f"**{asig['usuarios']['nombre_completo']}**")
-                st.caption(f"Área: {asig['usuarios']['area']}")
+                usuario_data = asig[usuarios_col] if isinstance(asig[usuarios_col], dict) else {}
+                st.write(f"**{usuario_data.get('nombre_completo', 'N/A')}**")
+                st.caption(f"Área: {usuario_data.get('area', 'N/A')}")
             
             with col2:
                 st.write(f"**{asig['epp_catalogo']['nombre']}**")
@@ -512,9 +518,11 @@ def dashboard_epp(usuario):
             options=["todos", "activo", "vencido", "renovado"]
         )
     
-    # Cargar asignaciones
+    # Cargar asignaciones - especificar relación del trabajador para evitar ambigüedad
     query = supabase.from_('epp_asignaciones').select(
-        '*, epp_catalogo(nombre, categoria), usuarios(nombre_completo, area)'
+        '*, '
+        'epp_catalogo(nombre, categoria), '
+        'usuarios!epp_asignaciones_trabajador_id_fkey(nombre_completo, area)'
     )
     
     if estado_filtro != "todos":
@@ -528,21 +536,24 @@ def dashboard_epp(usuario):
     
     df = pd.DataFrame(asignaciones)
     
+    # Normalizar nombre de columna de usuarios (puede venir con nombre de foreign key)
+    usuarios_col = 'usuarios!epp_asignaciones_trabajador_id_fkey' if 'usuarios!epp_asignaciones_trabajador_id_fkey' in df.columns else 'usuarios'
+    
     # Aplicar filtro de área si es necesario
     if area_filtro != "todos":
-        df = df[df['usuarios']['area'] == area_filtro]
+        df = df[df[usuarios_col].apply(lambda x: x.get('area') if isinstance(x, dict) else None) == area_filtro]
     
     # Preparar datos
     df['fecha_vencimiento'] = pd.to_datetime(df['fecha_vencimiento']).dt.date
     df['dias_restantes'] = (df['fecha_vencimiento'] - datetime.now().date()).apply(lambda x: x.days)
     
     # Mostrar tabla
-    df_display = df[['epp_catalogo', 'usuarios', 'fecha_entrega', 'fecha_vencimiento', 'estado', 'dias_restantes']].copy()
+    df_display = df[['epp_catalogo', usuarios_col, 'fecha_entrega', 'fecha_vencimiento', 'estado', 'dias_restantes']].copy()
     
     # Renombrar columnas
-    df_display['EPP'] = df_display['epp_catalogo'].apply(lambda x: x['nombre'])
-    df_display['Trabajador'] = df_display['usuarios'].apply(lambda x: x['nombre_completo'])
-    df_display['Área'] = df_display['usuarios'].apply(lambda x: x['area'])
+    df_display['EPP'] = df_display['epp_catalogo'].apply(lambda x: x['nombre'] if isinstance(x, dict) else '')
+    df_display['Trabajador'] = df_display[usuarios_col].apply(lambda x: x.get('nombre_completo') if isinstance(x, dict) else '')
+    df_display['Área'] = df_display[usuarios_col].apply(lambda x: x.get('area') if isinstance(x, dict) else '')
     df_display['Fecha Entrega'] = pd.to_datetime(df_display['fecha_entrega']).dt.strftime('%d/%m/%Y')
     df_display['Fecha Vencimiento'] = pd.to_datetime(df_display['fecha_vencimiento']).dt.strftime('%d/%m/%Y')
     
